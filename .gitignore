@@ -9,3 +9,14 @@ OVMF_VARS*.fd
 # Internal notes stay local; only the user-facing README is published.
 *.md
 !/README.md
+
+# Design source material stays local. Only AWA's own wallpapers and logo are published.
+/design/*
+!/design/03-original-awa-wallpapers/
+!/design/04-logo/
+/design/04-logo/*from-chatgpt*
+/design/04-logo/*from-pdf*
+
+# Web prototype build output and packages
+node_modules/
+/userland/shell-prototype/dist/

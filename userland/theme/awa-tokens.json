@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "about": "AWA design tokens. Single source for the web prototype and the future native (Rust) shell. Colours are sRGB hex or rgba(); lengths are px; durations are ms; springs are mass-spring-damper parameters.",
+
+  "font": {
+    "heading": "Space Grotesk",
+    "body": "Inter",
+    "mono": "JetBrains Mono"
+  },
+
+  "type": {
+    "display": { "size": 120, "weight": 600, "tracking": -0.04, "font": "heading" },
+    "h1": { "size": 34, "weight": 600, "tracking": -0.02, "font": "heading" },
+    "h2": { "size": 22, "weight": 600, "tracking": -0.01, "font": "heading" },
+    "h3": { "size": 17, "weight": 600, "tracking": 0, "font": "heading" },
+    "title": { "size": 14, "weight": 600, "tracking": 0, "font": "heading" },
+    "body": { "size": 13, "weight": 400, "tracking": 0, "font": "body" },
+    "small": { "size": 12, "weight": 400, "tracking": 0, "font": "body" },
+    "label": { "size": 11, "weight": 500, "tracking": 0.06, "font": "body", "case": "upper" },
+    "mono": { "size": 13, "weight": 400, "tracking": 0, "font": "mono" },
+    "monoSmall": { "size": 11.5, "weight": 400, "tracking": 0, "font": "mono" }
+  },
+
+  "space": { "1": 2, "2": 4, "3": 6, "4": 8, "5": 10, "6": 12, "7": 14, "8": 16, "9": 20, "10": 24, "11": 28, "12": 32, "13": 40, "14": 48 },
+
+  "radius": { "xs": 6, "sm": 8, "md": 12, "lg": 16, "xl": 20, "pill": 999 },
+
+  "border": { "hairline": 1, "focus": 2, "focusOffset": 2 },
+
+  "shadow": {
+    "window": "0 30px 80px rgba(0,0,0,.55)",
+    "windowInactive": "0 18px 48px rgba(0,0,0,.40)",
+    "popover": "0 24px 64px rgba(0,0,0,.50)",
+    "raised": "0 6px 18px rgba(0,0,0,.25)",
+    "text": "0 1px 4px rgba(0,0,0,.7)"
+  },
+
+  "blur": { "glass": 20, "lowMemory": 0 },
+
+  "motion": {
+    "spring": {
+      "press":  { "stiffness": 700, "damping": 38, "mass": 1 },
+      "snappy": { "stiffness": 520, "damping": 34, "mass": 1 },
+      "window": { "stiffness": 380, "damping": 30, "mass": 1.1 },
+      "panel":  { "stiffness": 320, "damping": 28, "mass": 1 },
+      "gentle": { "stiffness": 170, "damping": 26, "mass": 1 },
+      "boot":   { "stiffness": 90,  "damping": 20, "mass": 1 }
+    },
+    "duration": { "instant": 90, "fast": 160, "base": 220, "slow": 320, "fade": 300, "bootMax": 4800 },
+    "easing": {
+      "standard": "cubic-bezier(.2,0,0,1)",
+      "decelerate": "cubic-bezier(0,0,0,1)",
+      "accelerate": "cubic-bezier(.3,0,1,1)",
+      "camera": "cubic-bezier(.45,0,.15,1)"
+    },
+    "stagger": 28,
+    "pressScale": 0.96,
+    "hoverLift": -2
+  },
+
+  "surfaces": {
+    "tinted": {
+      "label": "Tinted",
+      "note": "Windows take the colour of the feel. The approved look.",
+      "window": "feel",
+      "glass": "feel",
+      "text": "#F5F0FF",
+      "muted": "#B9AED0",
+      "line": "rgba(255,255,255,.14)",
+      "raised": "rgba(255,255,255,.05)",
+      "hover": "rgba(255,255,255,.11)",
+      "selected": "rgba(255,255,255,.14)",
+      "track": "rgba(255,255,255,.10)",
+      "accentText": "accent2",
+      "focus": "#FFFFFF",
+      "scheme": "dark"
+    },
+    "black": {
+      "label": "Black",
+      "note": "Pure black surfaces. Easiest on OLED screens and at night.",
+      "window": "#000000",
+      "glass": "rgba(0,0,0,.72)",
+      "text": "#FFFFFF",
+      "muted": "#A8A3B3",
+      "line": "rgba(255,255,255,.16)",
+      "raised": "rgba(255,255,255,.06)",
+      "hover": "rgba(255,255,255,.12)",
+      "selected": "rgba(255,255,255,.16)",
+      "track": "rgba(255,255,255,.12)",
+      "accentText": "accent2",
+      "focus": "#FFFFFF",
+      "scheme": "dark"
+    },
+    "white": {
+      "label": "White",
+      "note": "Pure white surfaces with dark text. Best in bright rooms.",
+      "window": "#FFFFFF",
+      "glass": "rgba(255,255,255,.80)",
+      "text": "#0B0614",
+      "muted": "#5B5470",
+      "line": "rgba(11,6,20,.12)",
+      "raised": "rgba(11,6,20,.04)",
+      "hover": "rgba(11,6,20,.07)",
+      "selected": "rgba(11,6,20,.10)",
+      "track": "rgba(11,6,20,.10)",
+      "accentText": "ink",
+      "focus": "#0B0614",
+      "scheme": "light"
+    }
+  },
+
+  "feels": {
+    "nexus":    { "name": "NEXUS",    "note": "Eclipse. The flagship look.", "wallpaper": "01-NEXUS-eclipse.svg",       "accent": "#A855F7", "accent2": "#E9C7FF", "ink": "#7E22CE", "onAccent": "#12031F", "glass": "rgba(16,6,40,.62)",  "window": "#120830" },
+    "prism":    { "name": "PRISM",    "note": "Faceted glass.",              "wallpaper": "02-PRISM-glass.svg",         "accent": "#8B5CF6", "accent2": "#DDD0FF", "ink": "#6D28D9", "onAccent": "#12031F", "glass": "rgba(24,10,64,.60)", "window": "#170C3E" },
+    "flow":     { "name": "FLOW",     "note": "Strands of light.",           "wallpaper": "03-FLOW-light-strands.svg",  "accent": "#C084FC", "accent2": "#F0ABFC", "ink": "#86198F", "onAccent": "#12031F", "glass": "rgba(14,4,38,.60)",  "window": "#12062E" },
+    "signal":   { "name": "SIGNAL",   "note": "Rings and ticks, for tinkerers.", "wallpaper": "04-SIGNAL-rings.svg",    "accent": "#A78BFA", "accent2": "#C4B5FD", "ink": "#5B21B6", "onAccent": "#12031F", "glass": "rgba(12,4,34,.62)",  "window": "#10072E" },
+    "monolith": { "name": "MONOLITH", "note": "Quiet and minimal.",          "wallpaper": "05-MONOLITH-slab.svg",       "accent": "#B794F6", "accent2": "#E9D8FD", "ink": "#553C9A", "onAccent": "#12031F", "glass": "rgba(10,8,30,.65)",  "window": "#0F0B26" },
+    "ember":    { "name": "EMBER",    "note": "Our own dragon, amber moon.", "wallpaper": "06-EMBER-dragon.svg",        "accent": "#FF8A4C", "accent2": "#FFC9A0", "ink": "#B93E0A", "onAccent": "#1E0A0A", "glass": "rgba(28,6,34,.62)",  "window": "#1E0A2A" },
+    "aurora":   { "name": "AURORA",   "note": "Teal and violet night.",      "wallpaper": "07-AURORA-night.svg",        "accent": "#2DD4BF", "accent2": "#A5F3FC", "ink": "#0F766E", "onAccent": "#04121A", "glass": "rgba(4,16,38,.62)",  "window": "#08182E" },
+    "tide":     { "name": "TIDE",     "note": "Indigo coast, a nod to home.", "wallpaper": "08-TIDE-coast.svg",         "accent": "#60A5FA", "accent2": "#BAE6FD", "ink": "#1D4ED8", "onAccent": "#04102A", "glass": "rgba(10,18,56,.60)", "window": "#0D1744" }
+  },
+
+  "defaults": { "feel": "nexus", "surface": "tinted", "lowMemory": false },
+
+  "boot": {
+    "background": { "top": "#05010F", "bottom": "#2B0F6B", "diagonal": { "leftY": 0.80, "rightY": 0.62 } },
+    "ring": { "color": "#A855F7", "opacity": 0.55, "width": 1.5 },
+    "logoCenterY": 0.42,
+    "progress": { "y": 0.80, "width": 260, "height": 4 }
+  }
+}
