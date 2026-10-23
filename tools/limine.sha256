@@ -1,0 +1,4 @@
+# Limine v12.9.4 binary release (limine-binary.tar.gz), files used by AWA.
+8a7214bfd8b9a044b780f1e71b2752dc12ecc25c06b9cf39ac6a0a341c802282 *BOOTX64.EFI
+80468d0c0485447dc790d8be4c2834af3f581d3829867f66a273256ba91b65f8 *limine-bios.sys
+f68d3c2c96aca8883134016567b8ba644dfbada2ec16750d3009df288006e9ec *limine-tool-windows-x86/limine.exe

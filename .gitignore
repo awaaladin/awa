@@ -5,3 +5,7 @@
 *.qcow2
 /tools/cache/
 OVMF_VARS*.fd
+
+# Internal notes stay local; only the user-facing README is published.
+*.md
+!/README.md
