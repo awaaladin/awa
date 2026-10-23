@@ -1,0 +1,10 @@
+[package]
+name = "awa-mkimage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Builds the AWA boot disk image (MBR + FAT, Limine for BIOS and UEFI)."
+
+[dependencies]
+# No `chrono`: file timestamps aren't needed, and chrono needs dlltool on windows-gnu.
+fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }

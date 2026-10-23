@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["kernel", "tools/mkimage"]
+# The kernel only builds for x86_64-unknown-none; `tools/awa.py build` passes the target.
+default-members = ["tools/mkimage"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
