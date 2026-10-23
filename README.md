@@ -56,6 +56,30 @@ python tools/awa.py test         # automated boot test (UEFI and BIOS)
 screenshot and compares the on-screen text with `tests/golden/banner.txt`. It exits
 with code 0 only if both firmware types pass.
 
+## Desktop shell prototype
+
+`userland/shell-prototype` is a working web prototype of the AWA desktop: boot
+video, lock screen, desktop with draggable windows, launcher, quick settings, and the
+Files, Terminal, Browser, Boxes and Settings apps. It will be re-implemented natively;
+its design tokens live in `userland/theme/awa-tokens.json` so the native shell can read
+the same file.
+
+```
+cd userland/shell-prototype
+npm install
+npm run dev          # http://127.0.0.1:5173
+```
+
+- Eight feels (NEXUS, PRISM, FLOW, SIGNAL, MONOLITH, EMBER, AURORA, TIDE) and three
+  surfaces (Tinted, Black, White), switchable in Settings or Quick settings.
+- Low-memory mode (no blur, less motion, smaller boot video) and full support for the
+  system "reduce motion" setting.
+- The Terminal accepts `ram show`, `ram set <box> <size>`, `gpu show`,
+  `box list|new|run|reset` and `get <url> --into <box>` against mock data.
+- URL options for review: `?screen=boot|lock|desktop|gallery`, `&apps=terminal,settings`,
+  `&section=memory`, `&feel=ember`, `&surface=white`, `&lowmem=1`, `&time=20:21`,
+  `&run=ram show;gpu show`.
+
 ## Running on real hardware
 
 Write `awa.img` to a USB drive with a raw image writer (for example Rufus in "DD
