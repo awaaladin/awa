@@ -1,5 +1,6 @@
 //! x86_64 primitives. Inline assembly is only allowed under `arch/`.
 
+pub mod cpu;
 pub mod gdt;
 pub mod idt;
 pub mod port;

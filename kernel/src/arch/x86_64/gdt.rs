@@ -23,8 +23,8 @@ const IST_STACK_SIZE: usize = 16 * 1024;
 #[repr(C, align(16))]
 struct Stack([u8; IST_STACK_SIZE]);
 
-// TODO(awa): give IST stacks unmapped guard pages once the kernel owns its
-// page tables (Phase 2 step B maps them with guards).
+// Boot-time IST stacks. Once AWA's page tables are live they are replaced
+// by stacks with unmapped guard pages (see `set_ist`).
 static IST_STACKS: InitCell<[Stack; 3]> = InitCell::new([const { Stack([0; IST_STACK_SIZE]) }; 3]);
 
 #[repr(C, packed(4))]
@@ -116,4 +116,13 @@ pub fn init() {
             options(preserves_flags),
         );
     }
+}
+
+/// Points IST slot `ist` (1-based, as used in the IDT) at a new stack top.
+pub fn set_ist(ist: u8, stack_top: u64) {
+    assert!((1..=7).contains(&ist));
+    // SAFETY: single boot CPU with interrupts disabled; the CPU only reads the
+    // IST entry when delivering an exception that uses it, which cannot
+    // happen in the middle of this store on this CPU.
+    unsafe { TSS.get_mut().ist[usize::from(ist - 1)] = stack_top };
 }
