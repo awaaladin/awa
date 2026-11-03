@@ -78,8 +78,129 @@ static FRAMEBUFFER_REQUEST: Request<FramebufferResponse> =
     Request::new([0x9d58_27dc_d881_dd75, 0xa314_8604_f6fa_b11b], 0);
 
 #[used]
+#[unsafe(link_section = ".requests")]
+static MEMMAP_REQUEST: Request<MemmapResponse> = Request::new([0x67cf_3d9d_378a_806f, 0xe304_acdf_c50c_3c62], 0);
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static HHDM_REQUEST: Request<HhdmResponse> = Request::new([0x48dc_f1cb_8ad2_b852, 0x6398_4e95_9a98_244b], 0);
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static EXECUTABLE_ADDRESS_REQUEST: Request<ExecutableAddressResponse> =
+    Request::new([0x71ba_7686_3cc5_5f63, 0xb264_4a48_c516_a487], 0);
+
+#[used]
 #[unsafe(link_section = ".requests_end_marker")]
 static REQUESTS_END: [u64; 2] = [0xadc0_e053_1bb1_0d03, 0x9572_709f_3176_4c62];
+
+// ---------------------------------------------------------------- memory map
+
+#[repr(C)]
+struct MemmapResponse {
+    revision: u64,
+    entry_count: u64,
+    entries: *const *const RawMemmapEntry,
+}
+
+#[repr(C)]
+struct RawMemmapEntry {
+    base: u64,
+    length: u64,
+    kind: u64,
+}
+
+/// Physical memory region kinds reported by Limine.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MemKind {
+    Usable,
+    Reserved,
+    AcpiReclaimable,
+    AcpiNvs,
+    BadMemory,
+    BootloaderReclaimable,
+    KernelAndModules,
+    Framebuffer,
+    Other(u64),
+}
+
+impl MemKind {
+    fn from_raw(v: u64) -> Self {
+        match v {
+            0 => Self::Usable,
+            1 => Self::Reserved,
+            2 => Self::AcpiReclaimable,
+            3 => Self::AcpiNvs,
+            4 => Self::BadMemory,
+            5 => Self::BootloaderReclaimable,
+            6 => Self::KernelAndModules,
+            7 => Self::Framebuffer,
+            other => Self::Other(other),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MemRegion {
+    pub base: u64,
+    pub length: u64,
+    pub kind: MemKind,
+}
+
+/// The physical memory map, as copied at boot. Bootloader-reclaimable memory
+/// is treated as in use for now (TODO(awa): reclaim it once nothing from
+/// Limine is needed any more).
+pub struct MemoryMap {
+    entries: &'static [*const RawMemmapEntry],
+}
+
+impl MemoryMap {
+    pub fn iter(&self) -> impl Iterator<Item = MemRegion> + '_ {
+        self.entries.iter().map(|&p| {
+            // SAFETY: Limine guarantees every entry pointer is valid and
+            // points to a memory map entry that lives as long as the kernel
+            // (bootloader-reclaimable memory is never reused, see above).
+            let e = unsafe { &*p };
+            MemRegion { base: e.base, length: e.length, kind: MemKind::from_raw(e.kind) }
+        })
+    }
+}
+
+pub fn memory_map() -> Option<MemoryMap> {
+    let r = MEMMAP_REQUEST.response()?;
+    if r.entries.is_null() || r.entry_count == 0 {
+        return None;
+    }
+    // SAFETY: Limine guarantees `entries` points to `entry_count` entry
+    // pointers, valid for the kernel's lifetime.
+    let entries = unsafe { core::slice::from_raw_parts(r.entries, r.entry_count as usize) };
+    Some(MemoryMap { entries })
+}
+
+// ---------------------------------------------------------------- HHDM and kernel address
+
+#[repr(C)]
+struct HhdmResponse {
+    revision: u64,
+    offset: u64,
+}
+
+/// Offset of the higher-half direct map: physical address P is at virtual P + offset.
+pub fn hhdm_offset() -> Option<u64> {
+    HHDM_REQUEST.response().map(|r| r.offset)
+}
+
+#[repr(C)]
+struct ExecutableAddressResponse {
+    revision: u64,
+    physical_base: u64,
+    virtual_base: u64,
+}
+
+/// Where the kernel image was loaded: (physical base, virtual base).
+pub fn kernel_address() -> Option<(u64, u64)> {
+    EXECUTABLE_ADDRESS_REQUEST.response().map(|r| (r.physical_base, r.virtual_base))
+}
 
 /// True if the bootloader accepted `BASE_REVISION` (it then zeroes the last
 /// element of the tag).

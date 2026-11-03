@@ -1,18 +1,20 @@
 //! AWA kernel entry point.
 //!
-//! Phase 1 scope: boot through Limine, report over the serial port and draw
-//! the boot message on the framebuffer. Nothing else is initialized yet:
-//! no interrupts, no own page tables, no heap (Phase 2).
+//! Boot order: serial, CPU tables (GDT/TSS/IDT), self-tests, framebuffer.
+//! Phase 2 is in progress: own page tables, heap and timer are still to come.
 
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 mod arch;
 mod boot;
 mod console;
+mod selftest;
 mod serial;
+mod sync;
 
 use core::panic::PanicInfo;
 
@@ -32,6 +34,13 @@ extern "C" fn kmain() -> ! {
         );
         arch::halt_forever();
     }
+
+    arch::init();
+    serial_println!("AWA: CPU tables loaded (GDT, TSS with IST stacks, IDT)");
+
+    let mut tests = selftest::Report::new();
+    selftest::cpu(&mut tests);
+    tests.finish();
 
     match boot::take_framebuffer() {
         Ok(fb) => {

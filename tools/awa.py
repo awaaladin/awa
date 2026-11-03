@@ -348,6 +348,17 @@ def check_framebuffer(w: int, h: int, rgb: bytes, update_golden: bool) -> list:
     return failures
 
 
+def check_selftests(serial_text: str) -> list:
+    """Kernel self-tests print 'AWA TEST <name> PASS|FAIL ...' and a summary line."""
+    failures = [f"self-test failed: {line.strip()}" for line in serial_text.splitlines() if line.startswith("AWA TEST ") and " FAIL " in f"{line} "]
+    summary = [line for line in serial_text.splitlines() if line.startswith("AWA: self-test ")]
+    if not summary:
+        failures.append("kernel did not print a self-test summary")
+    elif not summary[-1].rstrip().endswith(" 0 failed"):
+        failures.append(f"self-test summary reports failures: {summary[-1].strip()}")
+    return failures
+
+
 def boot_test(image: Path, firmware: str, timeout: float, update_golden: bool) -> bool:
     workdir = build_dir() / "test" / firmware
     workdir.mkdir(parents=True, exist_ok=True)
@@ -403,8 +414,11 @@ def boot_test(image: Path, firmware: str, timeout: float, update_golden: bool) -
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+    serial_text = serial_log.read_text(errors="replace")
+    if ok:
+        failures += check_selftests(serial_text)
     print("--- serial output ---")
-    print(serial_log.read_text(errors="replace").rstrip())
+    print(serial_text.rstrip())
     print("---------------------")
     if failures:
         for f in failures:
