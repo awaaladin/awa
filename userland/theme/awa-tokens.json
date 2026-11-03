@@ -1,52 +1,163 @@
 {
   "version": 1,
   "about": "AWA design tokens. Single source for the web prototype and the future native (Rust) shell. Colours are sRGB hex or rgba(); lengths are px; durations are ms; springs are mass-spring-damper parameters.",
-
   "font": {
     "heading": "Space Grotesk",
     "body": "Inter",
     "mono": "JetBrains Mono"
   },
-
   "type": {
-    "display": { "size": 120, "weight": 600, "tracking": -0.04, "font": "heading" },
-    "h1": { "size": 34, "weight": 600, "tracking": -0.02, "font": "heading" },
-    "h2": { "size": 22, "weight": 600, "tracking": -0.01, "font": "heading" },
-    "h3": { "size": 17, "weight": 600, "tracking": 0, "font": "heading" },
-    "title": { "size": 14, "weight": 600, "tracking": 0, "font": "heading" },
-    "body": { "size": 13, "weight": 400, "tracking": 0, "font": "body" },
-    "small": { "size": 12, "weight": 400, "tracking": 0, "font": "body" },
-    "label": { "size": 11, "weight": 500, "tracking": 0.06, "font": "body", "case": "upper" },
-    "mono": { "size": 13, "weight": 400, "tracking": 0, "font": "mono" },
-    "monoSmall": { "size": 11.5, "weight": 400, "tracking": 0, "font": "mono" }
+    "display": {
+      "size": 112,
+      "weight": 300,
+      "tracking": -0.02,
+      "font": "heading"
+    },
+    "h1": {
+      "size": 34,
+      "weight": 600,
+      "tracking": -0.02,
+      "font": "heading"
+    },
+    "h2": {
+      "size": 22,
+      "weight": 600,
+      "tracking": -0.01,
+      "font": "heading"
+    },
+    "h3": {
+      "size": 17,
+      "weight": 600,
+      "tracking": 0,
+      "font": "heading"
+    },
+    "title": {
+      "size": 14,
+      "weight": 600,
+      "tracking": 0,
+      "font": "heading"
+    },
+    "body": {
+      "size": 13,
+      "weight": 400,
+      "tracking": 0,
+      "font": "body"
+    },
+    "small": {
+      "size": 12,
+      "weight": 400,
+      "tracking": 0,
+      "font": "body"
+    },
+    "label": {
+      "size": 11,
+      "weight": 500,
+      "tracking": 0.06,
+      "font": "body",
+      "case": "upper"
+    },
+    "mono": {
+      "size": 13,
+      "weight": 400,
+      "tracking": 0,
+      "font": "mono"
+    },
+    "monoSmall": {
+      "size": 11.5,
+      "weight": 400,
+      "tracking": 0,
+      "font": "mono"
+    },
+    "eyebrow": {
+      "size": 11,
+      "weight": 500,
+      "tracking": 0.24,
+      "font": "body",
+      "case": "upper"
+    }
   },
-
-  "space": { "1": 2, "2": 4, "3": 6, "4": 8, "5": 10, "6": 12, "7": 14, "8": 16, "9": 20, "10": 24, "11": 28, "12": 32, "13": 40, "14": 48 },
-
-  "radius": { "xs": 6, "sm": 8, "md": 12, "lg": 16, "xl": 20, "pill": 999 },
-
-  "border": { "hairline": 1, "focus": 2, "focusOffset": 2 },
-
+  "space": {
+    "1": 2,
+    "2": 4,
+    "3": 6,
+    "4": 8,
+    "5": 10,
+    "6": 12,
+    "7": 14,
+    "8": 16,
+    "9": 20,
+    "10": 24,
+    "11": 28,
+    "12": 32,
+    "13": 40,
+    "14": 48
+  },
+  "radius": {
+    "xs": 6,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 20,
+    "pill": 999
+  },
+  "border": {
+    "hairline": 1,
+    "focus": 2,
+    "focusOffset": 2
+  },
   "shadow": {
-    "window": "0 30px 80px rgba(0,0,0,.55)",
+    "window": "0 30px 80px rgba(0,0,0,.55), 0 0 60px rgba(168,85,247,.10)",
     "windowInactive": "0 18px 48px rgba(0,0,0,.40)",
     "popover": "0 24px 64px rgba(0,0,0,.50)",
     "raised": "0 6px 18px rgba(0,0,0,.25)",
-    "text": "0 1px 4px rgba(0,0,0,.7)"
+    "text": "0 1px 4px rgba(0,0,0,.7)",
+    "glow": "0 0 24px rgba(168,85,247,.45)"
   },
-
-  "blur": { "glass": 20, "lowMemory": 0 },
-
+  "blur": {
+    "glass": 24,
+    "lowMemory": 0
+  },
   "motion": {
     "spring": {
-      "press":  { "stiffness": 700, "damping": 38, "mass": 1 },
-      "snappy": { "stiffness": 520, "damping": 34, "mass": 1 },
-      "window": { "stiffness": 380, "damping": 30, "mass": 1.1 },
-      "panel":  { "stiffness": 320, "damping": 28, "mass": 1 },
-      "gentle": { "stiffness": 170, "damping": 26, "mass": 1 },
-      "boot":   { "stiffness": 90,  "damping": 20, "mass": 1 }
+      "press": {
+        "stiffness": 700,
+        "damping": 38,
+        "mass": 1
+      },
+      "snappy": {
+        "stiffness": 520,
+        "damping": 34,
+        "mass": 1
+      },
+      "window": {
+        "stiffness": 380,
+        "damping": 30,
+        "mass": 1.1
+      },
+      "panel": {
+        "stiffness": 320,
+        "damping": 28,
+        "mass": 1
+      },
+      "gentle": {
+        "stiffness": 170,
+        "damping": 26,
+        "mass": 1
+      },
+      "boot": {
+        "stiffness": 90,
+        "damping": 20,
+        "mass": 1
+      }
     },
-    "duration": { "instant": 90, "fast": 160, "base": 220, "slow": 320, "fade": 300, "bootMax": 4800 },
+    "duration": {
+      "instant": 90,
+      "fast": 160,
+      "base": 220,
+      "slow": 320,
+      "fade": 300,
+      "bootMax": 4800
+    },
     "easing": {
       "standard": "cubic-bezier(.2,0,0,1)",
       "decelerate": "cubic-bezier(0,0,0,1)",
@@ -57,7 +168,6 @@
     "pressScale": 0.96,
     "hoverLift": -2
   },
-
   "surfaces": {
     "tinted": {
       "label": "Tinted",
@@ -108,24 +218,181 @@
       "scheme": "light"
     }
   },
-
   "feels": {
-    "nexus":    { "name": "NEXUS",    "note": "Eclipse. The flagship look.", "wallpaper": "01-NEXUS-eclipse.svg",       "accent": "#A855F7", "accent2": "#E9C7FF", "ink": "#7E22CE", "onAccent": "#12031F", "glass": "rgba(16,6,40,.62)",  "window": "#120830" },
-    "prism":    { "name": "PRISM",    "note": "Faceted glass.",              "wallpaper": "02-PRISM-glass.svg",         "accent": "#8B5CF6", "accent2": "#DDD0FF", "ink": "#6D28D9", "onAccent": "#12031F", "glass": "rgba(24,10,64,.60)", "window": "#170C3E" },
-    "flow":     { "name": "FLOW",     "note": "Strands of light.",           "wallpaper": "03-FLOW-light-strands.svg",  "accent": "#C084FC", "accent2": "#F0ABFC", "ink": "#86198F", "onAccent": "#12031F", "glass": "rgba(14,4,38,.60)",  "window": "#12062E" },
-    "signal":   { "name": "SIGNAL",   "note": "Rings and ticks, for tinkerers.", "wallpaper": "04-SIGNAL-rings.svg",    "accent": "#A78BFA", "accent2": "#C4B5FD", "ink": "#5B21B6", "onAccent": "#12031F", "glass": "rgba(12,4,34,.62)",  "window": "#10072E" },
-    "monolith": { "name": "MONOLITH", "note": "Quiet and minimal.",          "wallpaper": "05-MONOLITH-slab.svg",       "accent": "#B794F6", "accent2": "#E9D8FD", "ink": "#553C9A", "onAccent": "#12031F", "glass": "rgba(10,8,30,.65)",  "window": "#0F0B26" },
-    "ember":    { "name": "EMBER",    "note": "Our own dragon, amber moon.", "wallpaper": "06-EMBER-dragon.svg",        "accent": "#FF8A4C", "accent2": "#FFC9A0", "ink": "#B93E0A", "onAccent": "#1E0A0A", "glass": "rgba(28,6,34,.62)",  "window": "#1E0A2A" },
-    "aurora":   { "name": "AURORA",   "note": "Teal and violet night.",      "wallpaper": "07-AURORA-night.svg",        "accent": "#2DD4BF", "accent2": "#A5F3FC", "ink": "#0F766E", "onAccent": "#04121A", "glass": "rgba(4,16,38,.62)",  "window": "#08182E" },
-    "tide":     { "name": "TIDE",     "note": "Indigo coast, a nod to home.", "wallpaper": "08-TIDE-coast.svg",         "accent": "#60A5FA", "accent2": "#BAE6FD", "ink": "#1D4ED8", "onAccent": "#04102A", "glass": "rgba(10,18,56,.60)", "window": "#0D1744" }
+    "horizon": {
+      "name": "HORIZON",
+      "note": "Eclipse ring over the violet waves. The default.",
+      "wallpaper": "scene:horizon",
+      "accent": "#A855F7",
+      "accent2": "#E9D5FF",
+      "ink": "#7E22CE",
+      "onAccent": "#12031F",
+      "glass": "rgba(10,8,38,.45)",
+      "window": "#0E0B2E",
+      "windowGlass": "rgba(16,11,52,.58)",
+      "number": 1,
+      "tagline": [
+        "A new era",
+        "of computing",
+        "is here."
+      ],
+      "lockClock": "ring"
+    },
+    "orbit": {
+      "name": "ORBIT",
+      "note": "The glass A in its orbit.",
+      "wallpaper": "scene:orbit",
+      "accent": "#8B5CF6",
+      "accent2": "#DDD6FE",
+      "ink": "#6D28D9",
+      "onAccent": "#0E0626",
+      "glass": "rgba(8,6,28,.45)",
+      "window": "#0B0920",
+      "windowGlass": "rgba(14,10,40,.58)",
+      "number": 2,
+      "tagline": [
+        "Smarter",
+        "Faster",
+        "Yours"
+      ],
+      "lockClock": "side"
+    },
+    "flow": {
+      "name": "FLOW",
+      "note": "Strands of light.",
+      "wallpaper": "scene:flow",
+      "accent": "#A855F7",
+      "accent2": "#E9D5FF",
+      "ink": "#7E22CE",
+      "onAccent": "#12031F",
+      "glass": "rgba(6,4,20,.45)",
+      "window": "#0B0820",
+      "windowGlass": "rgba(12,8,34,.58)",
+      "number": 3,
+      "tagline": [
+        "Flow with",
+        "intelligence"
+      ],
+      "lockClock": "side"
+    },
+    "signal": {
+      "name": "SIGNAL",
+      "note": "The ring in the circuit.",
+      "wallpaper": "scene:signal",
+      "accent": "#A78BFA",
+      "accent2": "#DDD6FE",
+      "ink": "#5B21B6",
+      "onAccent": "#12031F",
+      "glass": "rgba(8,6,24,.45)",
+      "window": "#0C0A26",
+      "windowGlass": "rgba(14,11,44,.58)",
+      "number": 4,
+      "tagline": [
+        "Built for people",
+        "powered by",
+        "technology"
+      ],
+      "lockClock": "ring"
+    },
+    "monolith": {
+      "name": "MONOLITH",
+      "note": "The slab over still water.",
+      "wallpaper": "scene:monolith",
+      "accent": "#8B5CF6",
+      "accent2": "#E0E7FF",
+      "ink": "#4338CA",
+      "onAccent": "#12031F",
+      "glass": "rgba(14,12,56,.45)",
+      "window": "#16134A",
+      "windowGlass": "rgba(22,19,74,.58)",
+      "number": 5,
+      "tagline": [
+        "Your world",
+        "in sync"
+      ],
+      "lockClock": "side"
+    },
+    "nexus": {
+      "name": "NEXUS",
+      "note": "Eclipse, the first wallpaper.",
+      "wallpaper": "01-NEXUS-eclipse.svg",
+      "accent": "#A855F7",
+      "accent2": "#E9C7FF",
+      "ink": "#7E22CE",
+      "onAccent": "#12031F",
+      "glass": "rgba(16,6,40,.62)",
+      "window": "#120830"
+    },
+    "prism": {
+      "name": "PRISM",
+      "note": "Faceted glass, the first wallpaper.",
+      "wallpaper": "02-PRISM-glass.svg",
+      "accent": "#8B5CF6",
+      "accent2": "#DDD0FF",
+      "ink": "#6D28D9",
+      "onAccent": "#12031F",
+      "glass": "rgba(24,10,64,.60)",
+      "window": "#170C3E"
+    },
+    "ember": {
+      "name": "EMBER",
+      "note": "Our own dragon, amber moon.",
+      "wallpaper": "06-EMBER-dragon.svg",
+      "accent": "#FF8A4C",
+      "accent2": "#FFC9A0",
+      "ink": "#B93E0A",
+      "onAccent": "#1E0A0A",
+      "glass": "rgba(28,6,34,.62)",
+      "window": "#1E0A2A"
+    },
+    "aurora": {
+      "name": "AURORA",
+      "note": "Teal and violet night.",
+      "wallpaper": "07-AURORA-night.svg",
+      "accent": "#2DD4BF",
+      "accent2": "#A5F3FC",
+      "ink": "#0F766E",
+      "onAccent": "#04121A",
+      "glass": "rgba(4,16,38,.62)",
+      "window": "#08182E"
+    },
+    "tide": {
+      "name": "TIDE",
+      "note": "Indigo coast, a nod to home.",
+      "wallpaper": "08-TIDE-coast.svg",
+      "accent": "#60A5FA",
+      "accent2": "#BAE6FD",
+      "ink": "#1D4ED8",
+      "onAccent": "#04102A",
+      "glass": "rgba(10,18,56,.60)",
+      "window": "#0D1744"
+    }
   },
-
-  "defaults": { "feel": "nexus", "surface": "tinted", "lowMemory": false },
-
+  "defaults": {
+    "feel": "horizon",
+    "surface": "tinted",
+    "lowMemory": false
+  },
   "boot": {
-    "background": { "top": "#05010F", "bottom": "#2B0F6B", "diagonal": { "leftY": 0.80, "rightY": 0.62 } },
-    "ring": { "color": "#A855F7", "opacity": 0.55, "width": 1.5 },
+    "background": {
+      "top": "#05010F",
+      "bottom": "#2B0F6B",
+      "diagonal": {
+        "leftY": 0.8,
+        "rightY": 0.62
+      }
+    },
+    "ring": {
+      "color": "#A855F7",
+      "opacity": 0.55,
+      "width": 1.5
+    },
     "logoCenterY": 0.42,
-    "progress": { "y": 0.80, "width": 260, "height": 4 }
-  }
+    "progress": {
+      "y": 0.8,
+      "width": 260,
+      "height": 4
+    }
+  },
+  "sceneCount": 5
 }

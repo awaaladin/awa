@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Backdrop } from '../scenes/Backdrop';
 import { useTheme } from '../theme/ThemeProvider';
-import { WALLPAPERS, type FeelId } from '../tokens';
+import type { FeelId } from '../tokens';
 
 /**
- * The feel's wallpaper. Switching feels cross-fades the new one in on top,
- * then drops the old layer so only one image stays in memory. In low-memory
+ * The feel's background. Switching feels cross-fades the new one in on top,
+ * then drops the old layer so only one scene stays in memory. In low-memory
  * mode it swaps instantly.
  */
 export function Wallpaper() {
@@ -28,17 +29,17 @@ export function Wallpaper() {
 
   return (
     <>
-      <div className="wall-layer" style={{ backgroundImage: `url("${WALLPAPERS[base]}")` }} aria-hidden="true" />
+      <div className="wall-layer"><Backdrop feel={base} /></div>
       {incoming && (
         <div
           className={`wall-layer is-next ${shown ? 'is-in' : ''}`}
-          style={{ backgroundImage: `url("${WALLPAPERS[incoming]}")` }}
-          aria-hidden="true"
           onTransitionEnd={() => {
             setBase(incoming);
             setIncoming(null);
           }}
-        />
+        >
+          <Backdrop feel={incoming} />
+        </div>
       )}
     </>
   );

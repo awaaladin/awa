@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useSystem } from '../state/SystemProvider';
 import { boxClass, boxUsed, declared, fmtGB, ramUsed, round, tradeoff, vramUsed, type Box } from '../state/system';
 import { useTheme } from '../theme/ThemeProvider';
-import { FEEL_IDS, SURFACE_IDS, tokens, WALLPAPERS } from '../tokens';
+import { Backdrop } from '../scenes/Backdrop';
+import { FEEL_IDS, SURFACE_IDS, tokens } from '../tokens';
 import type { SettingsSection } from '../shell/apps';
 import { Button } from '../ui/Button';
 import { Chip } from '../ui/Chip';
@@ -46,6 +47,7 @@ function Appearance() {
   const t = useTheme();
   return (
     <>
+      <div className="eyebrow">Settings · 01 / 03</div>
       <h2>Appearance</h2>
       <p className="lede">Pick a feel. The wallpaper, accent and glass change everywhere.</p>
 
@@ -73,7 +75,7 @@ function Appearance() {
           const f = tokens.feels[id];
           return (
             <button key={id} type="button" role="radio" aria-checked={t.feel === id} aria-label={`${f.name}: ${f.note}`} className="feel-card" style={{ ['--i' as string]: i }} onClick={() => t.setFeel(id)}>
-              <img src={WALLPAPERS[id]} alt="" loading="lazy" />
+              <span className="feel-thumb"><Backdrop feel={id} /></span>
               <div className="feel-name">{f.name}</div>
               <div className="feel-note">{f.note}</div>
             </button>
@@ -102,6 +104,7 @@ function Memory() {
   const d = declared(state);
   return (
     <>
+      <div className="eyebrow">Settings · 02 / 03</div>
       <h2>Memory</h2>
       <p className="lede">
         Every box has a limit you can change. Run <span className="mono acc-text">ram set render 2GB</span> for the same thing.
@@ -192,6 +195,7 @@ function Gpu() {
   const used = vramUsed(state);
   return (
     <>
+      <div className="eyebrow">Settings · 03 / 03</div>
       <h2>GPU</h2>
       <p className="lede">The GPU is scheduled like the CPU. Nothing waits behind a render you did not start.</p>
       <div className="card" style={{ marginTop: 16, padding: 16 }}>

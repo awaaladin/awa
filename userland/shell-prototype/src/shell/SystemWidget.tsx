@@ -1,24 +1,23 @@
-import { fmtShortDate, fmtTime, useClock } from '../motion/useClock';
 import { useSystem } from '../state/SystemProvider';
-import { fmtGB, ramUsed, vramUsed } from '../state/system';
-import { Meter } from '../ui/Meter';
+import { fmtGB, ramUsed } from '../state/system';
 
-/** Desktop clock with live RAM and GPU, from the same data as everything else. */
-export function SystemWidget() {
+/**
+ * The editorial status block in the top-left corner: "AWA OS" and three live
+ * lines, in the style of the brand boards ("SMARTER / FASTER / YOURS").
+ * Every number comes from the shared system state.
+ */
+export function SystemWidget({ onMemory }: { onMemory: () => void }) {
   const { state } = useSystem();
-  const now = useClock();
-  const ram = ramUsed(state);
-  const vram = vramUsed(state);
+  const running = state.boxes.filter((b) => b.state === 'running').length;
+  const jobs = state.gpu.jobs.length;
   return (
-    <aside className="widget glass" aria-label="System status">
-      <div className="widget-time">
-        <b>{fmtTime(now)}</b>
-        <span className="muted" style={{ fontSize: 12 }}>{fmtShortDate(now)}</span>
-      </div>
-      <span className="label">Memory · measured by AWA</span>
-      <Meter label="Memory in use" value={ram} max={state.ramTotalGB} detail={<><span>{fmtGB(ram)}</span><span className="muted">of {fmtGB(state.ramTotalGB)}</span></>} />
-      <span className="label">GPU · {state.gpu.jobs.length} jobs queued</span>
-      <Meter label="GPU memory in use" tone="acc2" value={vram} max={state.gpu.vramTotalGB} detail={<span>{vram.toFixed(1)} / {state.gpu.vramTotalGB} GB VRAM</span>} />
+    <aside className="brand" aria-label="System status">
+      <div className="brand-title">AWA OS</div>
+      <button type="button" className="brand-lines" onClick={onMemory} aria-label={`${fmtGB(ramUsed(state))} of ${fmtGB(state.ramTotalGB)} in use, ${running} boxes running, ${jobs} GPU jobs. Open memory settings`}>
+        <span>{fmtGB(ramUsed(state))} of {fmtGB(state.ramTotalGB)} in use</span>
+        <span>{running} boxes running</span>
+        <span>{jobs} GPU jobs</span>
+      </button>
     </aside>
   );
 }

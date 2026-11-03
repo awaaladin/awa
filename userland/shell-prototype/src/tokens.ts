@@ -2,9 +2,6 @@ import raw from '@theme/awa-tokens.json';
 
 import nexus from '@design/03-original-awa-wallpapers/01-NEXUS-eclipse.svg';
 import prism from '@design/03-original-awa-wallpapers/02-PRISM-glass.svg';
-import flow from '@design/03-original-awa-wallpapers/03-FLOW-light-strands.svg';
-import signal from '@design/03-original-awa-wallpapers/04-SIGNAL-rings.svg';
-import monolith from '@design/03-original-awa-wallpapers/05-MONOLITH-slab.svg';
 import ember from '@design/03-original-awa-wallpapers/06-EMBER-dragon.svg';
 import aurora from '@design/03-original-awa-wallpapers/07-AURORA-night.svg';
 import tide from '@design/03-original-awa-wallpapers/08-TIDE-coast.svg';
@@ -23,7 +20,14 @@ export type SpringConfig = { stiffness: number; damping: number; mass: number };
 export const FEEL_IDS = Object.keys(raw.feels) as FeelId[];
 export const SURFACE_IDS = Object.keys(raw.surfaces) as SurfaceId[];
 
-export const WALLPAPERS: Record<FeelId, string> = { nexus, prism, flow, signal, monolith, ember, aurora, tide };
+/** Image wallpapers. HORIZON, ORBIT, FLOW, SIGNAL and MONOLITH are live scenes (src/scenes), not images. */
+export const WALLPAPERS: Partial<Record<FeelId, string>> = { nexus, prism, ember, aurora, tide };
+
+/** Scene number ("01 / 05") and tagline from the brand boards, for scene feels. */
+export function sceneCopy(feel: FeelId): { number: number; tagline: string[]; clock: 'ring' | 'side' } | null {
+  const f = raw.feels[feel] as { number?: number; tagline?: string[]; lockClock?: string };
+  return f.number && f.tagline ? { number: f.number, tagline: f.tagline, clock: f.lockClock === 'side' ? 'side' : 'ring' } : null;
+}
 
 export const isFeelId = (v: unknown): v is FeelId => typeof v === 'string' && v in raw.feels;
 export const isSurfaceId = (v: unknown): v is SurfaceId => typeof v === 'string' && v in raw.surfaces;
@@ -73,6 +77,10 @@ export function themeVars(feelId: FeelId, surfaceId: SurfaceId, lowMemory: boole
     '--acc-text': s.accentText === 'ink' ? f.ink : f.accent2,
     '--glass': s.glass === 'feel' ? f.glass : s.glass,
     '--win': s.window === 'feel' ? f.window : s.window,
+    // Translucent glass for windows and panels; solid in low-memory mode (no blur to see through).
+    '--win-glass': lowMemory
+      ? s.window === 'feel' ? f.window : s.window
+      : s.window === 'feel' ? ('windowGlass' in f ? f.windowGlass : `${f.window}e6`) : surfaceId === 'white' ? 'rgba(255,255,255,.84)' : 'rgba(0,0,0,.74)',
     '--text': s.text,
     '--muted': s.muted,
     '--line': s.line,
@@ -82,12 +90,12 @@ export function themeVars(feelId: FeelId, surfaceId: SurfaceId, lowMemory: boole
     '--track': s.track,
     '--focus': s.focus,
     '--blur': `${lowMemory ? raw.blur.lowMemory : raw.blur.glass}px`,
-    '--wall': `url("${WALLPAPERS[feelId]}")`,
     '--shadow-window': raw.shadow.window,
     '--shadow-window-inactive': raw.shadow.windowInactive,
     '--shadow-popover': raw.shadow.popover,
     '--shadow-raised': raw.shadow.raised,
     '--shadow-text': raw.shadow.text,
+    '--shadow-glow': raw.shadow.glow,
     '--font-heading': `'${raw.font.heading}', system-ui, sans-serif`,
     '--font-body': `'${raw.font.body}', system-ui, sans-serif`,
     '--font-mono': `'${raw.font.mono}', ui-monospace, monospace`,

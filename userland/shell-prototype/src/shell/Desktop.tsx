@@ -5,7 +5,6 @@ import { FilesApp } from '../apps/FilesApp';
 import { SettingsApp } from '../apps/SettingsApp';
 import { TerminalApp } from '../apps/TerminalApp';
 import { useSystem } from '../state/SystemProvider';
-import { Icon } from '../ui/Icon';
 import { APPS, type AppId, type OpenRequest, type SettingsSection } from './apps';
 import { LauncherPanel } from './LauncherPanel';
 import { QuickSettings } from './QuickSettings';
@@ -16,13 +15,16 @@ import { WindowFrame, type Rect } from './WindowFrame';
 
 type Win = { id: AppId; rect: Rect; z: number; minimized: boolean; maximized: boolean; closing: boolean; section?: SettingsSection };
 
-const BASE: Rect = { x: 210, y: 56, w: 800, h: 540 };
+// Clear of the status block (top left) and the app rail (right).
+const BASE: Rect = { x: 270, y: 84, w: 740, h: 560 };
 
 function placeFor(count: number): Rect {
-  const w = Math.min(BASE.w, window.innerWidth - 40);
-  const h = Math.min(BASE.h, window.innerHeight - 120);
-  const step = 28 * (count % 6);
-  return { x: Math.min(BASE.x + step, window.innerWidth - w - 20), y: Math.min(BASE.y + step, window.innerHeight - h - 80), w, h };
+  // Keep clear of the app rail on the right (about 230 px) and the status line at the bottom.
+  const rightEdge = window.innerWidth - 230;
+  const w = Math.min(BASE.w, rightEdge - BASE.x);
+  const h = Math.min(BASE.h, window.innerHeight - 180);
+  const step = 26 * (count % 5);
+  return { x: Math.max(20, Math.min(BASE.x + step, rightEdge - w)), y: Math.min(BASE.y + step, window.innerHeight - h - 100), w, h };
 }
 
 type Props = { initial?: OpenRequest[] };
@@ -90,7 +92,14 @@ export function Desktop({ initial = [{ app: 'settings', section: 'appearance' }]
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const openIds = new Set(wins.filter((w) => !w.closing).map((w) => w.id));
+  // Open windows in the order they were opened: the corner counter walks this list.
+  const openIds = wins.filter((w) => !w.closing).map((w) => w.id);
+  const cycle = () => {
+    if (openIds.length < 2) return;
+    const i = focused ? openIds.indexOf(focused) : -1;
+    const next = openIds[(i + 1) % openIds.length];
+    if (next) open({ app: next });
+  };
 
   return (
     <main className="desktop" onPointerDown={(e) => {
@@ -101,16 +110,7 @@ export function Desktop({ initial = [{ app: 'settings', section: 'appearance' }]
     }}>
       <Wallpaper />
 
-      <div className="desk-icons">
-        {([['files', 'home', 'Home'], ['boxes', 'box', 'Boxes'], ['terminal', 'terminal', 'Terminal']] as const).map(([app, icon, label]) => (
-          <button key={app} type="button" className="desk-icon" onClick={() => open({ app })}>
-            <span className="desk-icon-badge glass"><Icon name={icon} size={24} /></span>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <SystemWidget />
+      <SystemWidget onMemory={() => open({ app: 'settings', section: 'memory' })} />
 
       {wins.map((w) => (
         <WindowFrame
@@ -151,7 +151,7 @@ export function Desktop({ initial = [{ app: 'settings', section: 'appearance' }]
         onLauncher={() => { setLauncher((v) => !v); setQuick(false); }}
         onQuick={() => { setQuick((v) => !v); setLauncher(false); }}
         onApp={onTaskbarApp}
-        onMemory={() => open({ app: 'settings', section: 'memory' })}
+        onCycle={cycle}
       />
     </main>
   );

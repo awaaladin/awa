@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { fmtLongDate, fmtTime, useClock } from '../motion/useClock';
-import { logoIcon } from '../tokens';
+import { Backdrop } from '../scenes/Backdrop';
+import { useTheme } from '../theme/ThemeProvider';
+import { sceneCopy, tokens } from '../tokens';
 import { Icon } from '../ui/Icon';
 
 type Props = { user: string; onUnlock: () => void };
 
 /**
- * Prototype lock screen. Any non-empty password unlocks (there are no real
- * accounts yet): an empty one shows the error state.
+ * Lock screen in the HORIZON composition: the time sits inside the eclipse
+ * ring, the editorial "AWA OS" block in the corner. Any non-empty password
+ * unlocks (there are no real accounts yet); an empty one shows the error state.
  */
 export function LockScreen({ user, onUnlock }: Props) {
+  const { feel } = useTheme();
+  const copy = sceneCopy(feel);
   const now = useClock();
   const [value, setValue] = useState('');
   const [state, setState] = useState<'idle' | 'checking' | 'error'>('idle');
@@ -34,15 +39,24 @@ export function LockScreen({ user, onUnlock }: Props) {
 
   return (
     <main className="lock">
-      <div className="lock-wall" />
-      <div className="lock-scrim" />
-      <div className="lock-clock">
+      <Backdrop feel={feel} className="lock-backdrop" />
+      <div className="brand lock-brand">
+        <div className="brand-title">AWA OS</div>
+        <div className="brand-tagline">
+          {(copy?.tagline ?? ['A new era', 'of computing', 'is here.']).map((line) => <span key={line}>{line}</span>)}
+        </div>
+      </div>
+      {copy && (
+        <div className="scene-number" aria-label={`Scene ${copy.number} of ${tokens.sceneCount}`}>
+          {String(copy.number).padStart(2, '0')} <span className="counter-sep">/</span> {String(tokens.sceneCount).padStart(2, '0')}
+        </div>
+      )}
+      <div className={`lock-clock ${copy?.clock === 'side' ? 'is-side' : ''}`}>
         <div className="lock-time" aria-label={`Time ${fmtTime(now)}`}>{fmtTime(now)}</div>
-        <div className="lock-date">{fmtLongDate(now)}</div>
+        <div className="eyebrow lock-date">{fmtLongDate(now)}</div>
       </div>
       <form className="lock-form" onSubmit={submit}>
-        <img src={logoIcon} alt="AWA" width={56} height={61} />
-        <div className="lock-user">{user}</div>
+        <div className="eyebrow lock-user">{user}</div>
         <div ref={field} className={`lock-field ${state === 'error' ? 'is-error' : ''}`}>
           <label htmlFor="lock-pass" className="sr-only">Password or key</label>
           <input
