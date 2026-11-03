@@ -20,3 +20,9 @@ OVMF_VARS*.fd
 # Web prototype build output and packages
 node_modules/
 /userland/shell-prototype/dist/
+
+# Personal files that live in this folder but are not part of AWA
+/WhatsApp Image *
+/aktvid*.mp4
+/google*.html
+/school.jpeg
