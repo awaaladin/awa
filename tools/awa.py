@@ -161,6 +161,40 @@ def cmd_image(_args=None) -> Path:
     return out
 
 
+# ---------------------------------------------------------------- USB (UEFI, file copy only)
+
+def cmd_usb(args) -> None:
+    """Copies AWA onto an existing FAT32 USB drive for UEFI boot.
+
+    Only ordinary files are written (EFI/BOOT/BOOTX64.EFI and boot/...). The
+    boot sector and every existing file are left alone, so the drive keeps
+    its contents. Legacy BIOS boot is not set up: that needs a write to the
+    boot sector and enough free space before the first partition.
+    """
+    root = Path(args.drive.rstrip("\\/") + "/")
+    if not root.is_dir():
+        sys.exit(f"awa: drive {args.drive} not found")
+    kernel, _ = cmd_build()
+    ldir = verify_limine()
+    plan = {
+        root / "EFI" / "BOOT" / "BOOTX64.EFI": ldir / "BOOTX64.EFI",
+        root / "boot" / "limine" / "limine.conf": ROOT / "boot" / "limine.conf",
+        root / "boot" / "awa-kernel": kernel,
+    }
+    marker = root / "boot" / "awa-installed.txt"
+    for dest, src in plan.items():
+        if dest.exists() and not marker.exists() and dest.read_bytes() != src.read_bytes():
+            sys.exit(f"awa: {dest} already exists and was not put there by AWA; not overwriting it")
+    for dest, src in plan.items():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        if hashlib.sha256(dest.read_bytes()).hexdigest() != hashlib.sha256(src.read_bytes()).hexdigest():
+            sys.exit(f"awa: verification failed for {dest}")
+        print(f"awa: copied and verified {dest}")
+    marker.write_text("Files under boot/ and EFI/BOOT/BOOTX64.EFI were installed by AWA (tools/awa.py usb).\n")
+    print("awa: done. Boot the drive in UEFI mode (Secure Boot off).")
+
+
 # ---------------------------------------------------------------- QEMU
 
 def qemu_args(image: Path, firmware: str, workdir: Path, display: bool) -> list:
@@ -398,6 +432,9 @@ def main() -> None:
     r = sub.add_parser("run")
     r.add_argument("--bios", action="store_true", help="boot with legacy BIOS instead of UEFI")
     r.set_defaults(func=cmd_run)
+    u = sub.add_parser("usb", help="copy AWA onto a FAT32 USB drive for UEFI boot (keeps existing files)")
+    u.add_argument("drive", help="drive root, e.g. D:")
+    u.set_defaults(func=cmd_usb)
     t = sub.add_parser("test")
     t.add_argument("--firmware", action="append", choices=["uefi", "bios"])
     t.add_argument("--timeout", type=float, default=300.0, help="seconds to wait for boot (QEMU without KVM is slow)")
