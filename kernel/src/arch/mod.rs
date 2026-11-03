@@ -2,4 +2,4 @@
 
 mod x86_64;
 
-pub use x86_64::{breakpoint, cpu, cpuid, gdt, halt_forever, idt, init, port, probe};
+pub use x86_64::{apic, breakpoint, cpu, gdt, halt_forever, idt, init, port, probe};

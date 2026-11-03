@@ -27,11 +27,13 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
     unsafe { asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32, options(nostack, preserves_flags)) };
 }
 
-pub fn read_cr3() -> u64 {
+/// One RDRAND attempt. Only call when `features().rdrand` is true.
+pub fn rdrand64() -> Option<u64> {
     let v: u64;
-    // SAFETY: reading CR3 has no side effects.
-    unsafe { asm!("mov {}, cr3", out(reg) v, options(nomem, nostack, preserves_flags)) };
-    v
+    let ok: u8;
+    // SAFETY: RDRAND writes a register and the carry flag; callers check CPUID first.
+    unsafe { asm!("rdrand {v}", "setc {ok}", v = out(reg) v, ok = out(reg_byte) ok, options(nomem, nostack)) };
+    (ok == 1).then_some(v)
 }
 
 /// # Safety
@@ -46,6 +48,11 @@ pub unsafe fn write_cr3(pml4_phys: u64) {
 pub fn invlpg(virt: u64) {
     // SAFETY: invlpg only drops a cached translation; it never breaks memory safety.
     unsafe { asm!("invlpg [{}]", in(reg) virt, options(nostack, preserves_flags)) };
+}
+
+/// CPUID.1:ECX bit 31: set by hypervisors, never by real hardware.
+pub fn running_under_hypervisor() -> bool {
+    super::cpuid(1, 0).2 & (1 << 31) != 0
 }
 
 pub struct Features {
@@ -108,8 +115,6 @@ pub fn enable_protections() -> Protections {
 
 /// PAT layout used by AWA's page tables: index 0 write-back (default),
 /// index 1 write-combining (framebuffer), the rest uncached variants.
-pub const PAT_WRITE_COMBINING_INDEX: u64 = 1;
-
 pub fn program_pat() {
     // WB, WC, UC-, UC, WB, WC, UC-, UC (types: WB=6, WC=1, UC-=7, UC=0).
     let pat: u64 = 0x0007_0106_0007_0106;

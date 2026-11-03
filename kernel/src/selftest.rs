@@ -3,7 +3,7 @@
 //! or the summary is missing. They run on every boot (they are fast), so real
 //! hardware is checked too.
 
-use crate::arch::{self, probe};
+use crate::arch::{self, apic, probe};
 use crate::mem::{self, frames, paging};
 use crate::serial_println;
 use alloc::boxed::Box;
@@ -134,4 +134,49 @@ pub fn cpu(r: &mut Report) {
     let got = probe::read(UNMAPPED);
     let ok = matches!(got, probe::Outcome::Faulted { addr, code } if addr == UNMAPPED && code & 1 == 0);
     r.check("page-fault-caught", ok, format_args!("read of {:#x} -> {:?}", UNMAPPED, got));
+}
+
+/// Timer: interrupts arrive at the configured rate, measured against the TSC.
+/// Real hardware must be within 3 %. Under a hypervisor without hardware
+/// acceleration (QEMU TCG) emulated time drifts, so 30 % is allowed there
+/// and the result says so.
+pub fn timer(r: &mut Report) {
+    let virtualized = crate::arch::cpu::running_under_hypervisor();
+    let tsc_hz = apic::TSC_HZ.load(Ordering::Relaxed);
+    let start = apic::TICKS.load(Ordering::Relaxed);
+    let deadline = apic::tsc() + tsc_hz; // one second
+    while apic::tsc() < deadline {
+        apic::wait_for_interrupt();
+    }
+    let ticks = apic::TICKS.load(Ordering::Relaxed) - start;
+    let expected = apic::TICK_HZ;
+    let tolerance_pct = if virtualized { 30 } else { 3 };
+    let ok = ticks * 100 >= expected * (100 - tolerance_pct) && ticks * 100 <= expected * (100 + tolerance_pct);
+    r.check(
+        "timer-rate",
+        ok,
+        format_args!("{} ticks in 1 s of TSC time (expected {} +/-{}%{})", ticks, expected, tolerance_pct, if virtualized { ", running under a hypervisor" } else { "" }),
+    );
+}
+
+/// Random numbers: the ChaCha20 core matches RFC 8439, and output looks random.
+pub fn random(r: &mut Report) {
+    let key: [u32; 8] = core::array::from_fn(|i| u32::from_le_bytes([(4 * i) as u8, (4 * i + 1) as u8, (4 * i + 2) as u8, (4 * i + 3) as u8]));
+    let block = crate::rng::chacha20_block(&key, 1, &[0x0900_0000, 0x4a00_0000, 0]);
+    let want = [0xe4e7_f110, 0x1559_3bd1, 0x1fdd_0f50, 0xc471_20a3];
+    r.check("chacha20-rfc8439", block[..4] == want, format_args!("block function test vector (RFC 8439 2.3.2)"));
+
+    let mut ones = 0u32;
+    let mut repeats = 0;
+    let mut last = 0u64;
+    for _ in 0..1000 {
+        let v = crate::rng::next_u64();
+        ones += v.count_ones();
+        if v == last {
+            repeats += 1;
+        }
+        last = v;
+    }
+    let mean = ones as f64 / 1000.0;
+    r.check("rng-output", (31.0..=33.0).contains(&mean) && repeats == 0, format_args!("1000 values: mean {:.2} set bits of 64, {} repeats", mean, repeats));
 }

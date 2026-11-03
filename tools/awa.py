@@ -202,6 +202,9 @@ def qemu_args(image: Path, firmware: str, workdir: Path, display: bool) -> list:
     args = [
         qemu, "-machine", "q35", "-m", "256M", "-smp", "2", "-no-reboot",
         "-drive", f"format=raw,file={image}",
+        # UEFI runs on QEMU's full-featured CPU (x2APIC, SMEP, SMAP, UMIP, RDRAND);
+        # BIOS on the plain default CPU, so both code paths get tested.
+        "-cpu", "max" if firmware == "uefi" else "qemu64",
     ]
     if firmware == "uefi":
         code, vars_template = firmware_files(qemu)

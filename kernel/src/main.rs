@@ -16,11 +16,12 @@ mod arch;
 mod boot;
 mod console;
 mod mem;
+mod rng;
 mod selftest;
 mod serial;
 mod sync;
 
-use arch::{cpu, gdt};
+use arch::{apic, cpu, gdt};
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -97,9 +98,26 @@ fn on(b: bool) -> &'static str {
 }
 
 extern "C" fn kmain_on_kernel_stack() -> ! {
+    let features = cpu::features();
+    match apic::init(features.x2apic) {
+        Ok(t) => serial_println!(
+            "AWA: local APIC ({}) timer at {} Hz ({} APIC ticks each); TSC {} MHz{}",
+            if t.x2apic { "x2APIC" } else { "xAPIC" },
+            apic::TICK_HZ,
+            t.apic_ticks_per_tick,
+            t.tsc_hz / 1_000_000,
+            if features.invariant_tsc { ", invariant" } else { "" }
+        ),
+        Err(e) => panic!("timer setup failed: {e}"),
+    }
+    apic::enable_interrupts();
+    serial_println!("AWA: random numbers seeded from {}", rng::init(features.rdrand));
+
     let mut tests = selftest::Report::new();
     selftest::cpu(&mut tests);
     selftest::memory(&mut tests);
+    selftest::timer(&mut tests);
+    selftest::random(&mut tests);
     tests.finish();
 
     match boot::take_framebuffer() {
