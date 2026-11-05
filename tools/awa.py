@@ -200,7 +200,7 @@ def cmd_usb(args) -> None:
 def qemu_args(image: Path, firmware: str, workdir: Path, display: bool) -> list:
     qemu = qemu_binary()
     args = [
-        qemu, "-machine", "q35", "-m", "256M", "-smp", "2", "-no-reboot",
+        qemu, "-machine", "q35", "-m", "256M", "-smp", "4", "-no-reboot",
         "-drive", f"format=raw,file={image}",
         # UEFI runs on QEMU's full-featured CPU (x2APIC, SMEP, SMAP, UMIP, RDRAND);
         # BIOS on the plain default CPU, so both code paths get tested.
@@ -330,13 +330,13 @@ def check_framebuffer(w: int, h: int, rgb: bytes, update_golden: bool) -> list:
     if text_count < 500:
         failures.append(f"banner area has only {text_count} text pixels (expected the boot message)")
 
-    stray = 0
-    for y in range(BANNER_Y + BANNER_BOX_H + 8, h, 5):
-        for x in range(0, w, 5):
-            if px(x, y) != BACKGROUND:
-                stray += 1
-    if stray:
-        failures.append(f"{stray} sampled pixels below the banner are not background")
+    # Self-test results are drawn below the banner; the far corner stays empty.
+    results = sum(1 for y in range(BANNER_Y + BANNER_BOX_H + 8, min(h, 600), 3) for x in range(BANNER_X, min(w, 900), 3) if px(x, y) != BACKGROUND)
+    if results < 100:
+        failures.append(f"no self-test results drawn below the banner ({results} text pixels)")
+    corner = sum(1 for y in range(h - 40, h, 4) for x in range(w - 200, w, 4) if px(x, y) != BACKGROUND)
+    if corner:
+        failures.append(f"{corner} stray pixels in the bottom-right corner")
 
     mask = "\n".join(mask_rows) + "\n"
     if update_golden:

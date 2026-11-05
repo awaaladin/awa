@@ -6,6 +6,7 @@
 
 use crate::arch::port::{inb, outb};
 use core::fmt::{self, Write};
+use crate::sync::SpinLock;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 const COM1: u16 = 0x3F8;
@@ -63,11 +64,21 @@ impl Write for SerialWriter {
     }
 }
 
+static LOCK: SpinLock<()> = SpinLock::new(());
+
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     if PRESENT.load(Ordering::Relaxed) {
-        // Phase 1 runs on one CPU with interrupts off, so lines cannot
-        // interleave. TODO(awa): take a lock once SMP is up (Phase 3).
+        let _line = LOCK.lock(); // lines from different CPUs never interleave
+        let _ = SerialWriter.write_fmt(args);
+    }
+}
+
+/// Panic path: prints even if another CPU died holding the serial lock.
+#[doc(hidden)]
+pub fn _print_force(args: fmt::Arguments) {
+    if PRESENT.load(Ordering::Relaxed) {
+        let _line = LOCK.try_lock();
         let _ = SerialWriter.write_fmt(args);
     }
 }

@@ -17,9 +17,11 @@ mod boot;
 mod console;
 mod mem;
 mod rng;
+mod sched;
 mod selftest;
 mod serial;
 mod sync;
+mod trace;
 
 use arch::{apic, cpu, gdt};
 use core::panic::PanicInfo;
@@ -110,15 +112,31 @@ extern "C" fn kmain_on_kernel_stack() -> ! {
         ),
         Err(e) => panic!("timer setup failed: {e}"),
     }
-    apic::enable_interrupts();
+
+    // The boot CPU becomes CPU 0 of the scheduler; this code continues as the
+    // interactive thread "kmain".
+    let me = sched::cpu::register_this(0, apic::id());
+    let boot_thread = sched::adopt_current("kmain", sched::Class::Interactive);
+    match sched::new_idle(0) {
+        Ok(idle) => me.set_idle(idle),
+        Err(e) => panic!("idle thread: {e}"),
+    }
+    sched::start_cpu(boot_thread);
+    arch::enable_interrupts();
     serial_println!("AWA: random numbers seeded from {}", rng::init(features.rdrand));
 
+    // The timer is measured before other CPUs start, so an emulator that is
+    // short of host CPU time does not distort the result.
     let mut tests = selftest::Report::new();
+    selftest::timer(&mut tests);
+
+    let expected = start_other_cpus();
+
     selftest::cpu(&mut tests);
     selftest::memory(&mut tests);
-    selftest::timer(&mut tests);
     selftest::random(&mut tests);
-    tests.finish();
+    selftest::scheduler(&mut tests, expected);
+    let summary = tests.finish();
 
     match boot::take_framebuffer() {
         Ok(fb) => {
@@ -126,17 +144,96 @@ extern "C" fn kmain_on_kernel_stack() -> ! {
             let mut console = console::Console::new(fb);
             console.clear();
             console.draw_banner(BOOT_MESSAGE);
+            let mut lines = summary.lines;
+            lines.push(alloc::format!("self-test: {} passed, {} failed", summary.passed, summary.failed));
+            console.draw_lines(&lines);
         }
         Err(reason) => serial_println!("AWA: no framebuffer output: {}", reason),
     }
 
     serial_println!("{}", BOOT_MESSAGE);
-    arch::halt_forever()
+    // The boot work is done; this thread ends and the CPUs keep scheduling.
+    sched::exit()
+}
+
+// ---------------------------------------------------------------- other CPUs
+
+/// CPUs that finished bringing themselves up (the boot CPU included).
+pub static ONLINE: AtomicU64 = AtomicU64::new(1);
+
+/// Scheduler index of the CPU with local APIC ID `lapic_id`: the boot CPU is
+/// 0, the others follow in the order Limine lists them.
+fn cpu_index(cpus: &boot::Cpus, lapic_id: u32) -> usize {
+    if lapic_id == cpus.bsp_lapic_id {
+        return 0;
+    }
+    1 + cpus.list.iter().filter(|c| c.lapic_id != cpus.bsp_lapic_id).position(|c| c.lapic_id == lapic_id).expect("CPU not in Limine's list")
+}
+
+/// Starts every other CPU and waits (up to 2 s) until they report in.
+/// Returns how many CPUs the machine has.
+fn start_other_cpus() -> usize {
+    let Some(cpus) = boot::cpus() else {
+        serial_println!("AWA: bootloader did not report other CPUs; running on one");
+        return 1;
+    };
+    let total = cpus.list.len();
+    for info in cpus.list.iter().filter(|c| c.lapic_id != cpus.bsp_lapic_id) {
+        // Create the per-CPU block first, so work can be queued for it at once.
+        sched::cpu::prepare(cpu_index(&cpus, info.lapic_id), info.lapic_id);
+        info.start(ap_entry);
+    }
+    let deadline = apic::tsc() + apic::TSC_HZ.load(Ordering::Relaxed) * 2;
+    while (ONLINE.load(Ordering::Acquire) as usize) < total && apic::tsc() < deadline {
+        sched::sleep_ns(1_000_000);
+    }
+    serial_println!("AWA: {} of {} CPUs online", ONLINE.load(Ordering::Acquire), total);
+    total
+}
+
+/// First code a secondary CPU runs, on Limine's stack and page tables.
+extern "C" fn ap_entry(_info: &'static boot::MpInfo) -> ! {
+    cpu::enable_protections();
+    cpu::program_pat();
+    // SAFETY: the kernel's page tables map this code, its data and the
+    // direct map (which holds Limine's stack for this CPU).
+    unsafe { cpu::write_cr3(mem::paging::kernel_pml4()) };
+    let stack = match mem::paging::new_stack(KERNEL_STACK_PAGES) {
+        Ok(s) => s,
+        Err(e) => panic!("CPU stack: {e}"),
+    };
+    // SAFETY: a fresh, aligned, guarded stack used by nothing else.
+    unsafe { cpu::switch_stack(stack.top, ap_main) }
+}
+
+extern "C" fn ap_main() -> ! {
+    let mut ist = [0u64; 3];
+    for top in ist.iter_mut() {
+        *top = match mem::paging::new_stack(IST_STACK_PAGES) {
+            Ok(s) => s.top,
+            Err(e) => panic!("CPU IST stack: {e}"),
+        };
+    }
+    gdt::init_secondary(ist);
+    arch::idt::load();
+    apic::init_secondary();
+    let cpus = boot::cpus().expect("started by Limine, so the CPU list exists");
+    let index = cpu_index(&cpus, apic::id());
+    let me = sched::cpu::register_this(index, apic::id());
+    // This CPU's start-up code becomes its idle thread.
+    let idle = sched::adopt_current("idle", sched::Class::Idle);
+    me.set_idle(idle);
+    sched::start_cpu(idle);
+    ONLINE.fetch_add(1, Ordering::AcqRel);
+    loop {
+        arch::enable_interrupts();
+        apic::wait_for_interrupt();
+    }
 }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    serial_println!("AWA: KERNEL PANIC: {}", info);
+    crate::serial::_print_force(format_args!("AWA: KERNEL PANIC: {}\n", info));
     arch::idt::backtrace();
     arch::halt_forever()
 }

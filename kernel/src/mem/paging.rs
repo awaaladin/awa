@@ -9,7 +9,7 @@
 
 use super::{frames, phys_to_virt, PAGE_SIZE};
 use crate::boot::{MemKind, MemoryMap};
-use crate::sync::InitCell;
+use crate::sync::SpinLock;
 
 const PRESENT: u64 = 1 << 0;
 const WRITABLE: u64 = 1 << 1;
@@ -50,12 +50,12 @@ struct Space {
     next_stack: u64,
 }
 
-static KERNEL_SPACE: InitCell<Option<Space>> = InitCell::new(None);
+static KERNEL_SPACE: SpinLock<Option<Space>> = SpinLock::new(None);
 
-fn space() -> &'static mut Space {
-    // SAFETY: single boot CPU; page-table edits happen with interrupts
-    // disabled and never from an interrupt handler. TODO(awa): lock in Phase 3.
-    unsafe { KERNEL_SPACE.get_mut() }.as_mut().expect("kernel address space not built")
+/// Runs `f` with the kernel address space locked (all page-table edits go through here).
+fn with_space<R>(f: impl FnOnce(&mut Space) -> R) -> R {
+    let mut g = KERNEL_SPACE.lock();
+    f(g.as_mut().expect("kernel address space not built"))
 }
 
 fn table(phys: u64) -> &'static mut [u64; 512] {
@@ -186,19 +186,24 @@ pub fn build(map: &MemoryMap, hhdm: u64, kernel_phys: u64, kernel_virt: u64) -> 
         }
     }
 
-    // SAFETY: single boot CPU; nothing else uses KERNEL_SPACE yet.
-    unsafe { *KERNEL_SPACE.get_mut() = Some(Space { pml4, next_stack: STACKS_BASE }) };
+    *KERNEL_SPACE.lock() = Some(Space { pml4, next_stack: STACKS_BASE });
     Ok(Built { pml4, mapped_direct })
 }
 
 /// Maps fresh zeroed frames at [virt, virt + pages*4K) in the kernel space.
 pub fn map_new(virt: u64, pages: u64, access: Access) -> Result<(), &'static str> {
-    let pml4 = space().pml4;
-    for i in 0..pages {
-        let f = frames::alloc_zeroed().ok_or("out of memory")?;
-        map_4k(pml4, virt + i * PAGE_SIZE, f, access)?;
-    }
-    Ok(())
+    with_space(|s| {
+        for i in 0..pages {
+            let f = frames::alloc_zeroed().ok_or("out of memory")?;
+            map_4k(s.pml4, virt + i * PAGE_SIZE, f, access)?;
+        }
+        Ok(())
+    })
+}
+
+/// The kernel's top-level page table (loaded by every CPU).
+pub fn kernel_pml4() -> u64 {
+    with_space(|s| s.pml4)
 }
 
 /// A kernel stack: [bottom, top) is mapped; the page below `bottom` never is.
@@ -209,12 +214,14 @@ pub struct Stack {
 }
 
 pub fn new_stack(pages: u64) -> Result<Stack, &'static str> {
-    let s = space();
-    let slot = s.next_stack;
     if pages * PAGE_SIZE + PAGE_SIZE > STACK_SLOT {
         return Err("stack too large for a slot");
     }
-    s.next_stack += STACK_SLOT;
+    let slot = with_space(|s| {
+        let slot = s.next_stack;
+        s.next_stack += STACK_SLOT;
+        slot
+    });
     let bottom = slot + PAGE_SIZE; // the slot's first page stays unmapped: the guard
     map_new(bottom, pages, Access::ReadWrite)?;
     Ok(Stack { bottom, top: bottom + pages * PAGE_SIZE })
@@ -223,7 +230,8 @@ pub fn new_stack(pages: u64) -> Result<Stack, &'static str> {
 /// Maps device memory (uncached) at its direct-map address and returns it.
 pub fn map_mmio(phys: u64, len: u64, hhdm: u64) -> Result<u64, &'static str> {
     const UNCACHED: u64 = PRESENT | WRITABLE | GLOBAL | NO_EXECUTE | (1 << 4) | WRITE_THROUGH; // PCD|PWT -> PAT index 3 = UC
-    let pml4 = space().pml4;
+    let pml4 = kernel_pml4();
+    let _edit = KERNEL_SPACE.lock(); // serialise with other page-table edits
     let start = phys / PAGE_SIZE * PAGE_SIZE;
     let end = (phys + len).next_multiple_of(PAGE_SIZE);
     let mut p = start;

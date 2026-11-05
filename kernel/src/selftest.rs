@@ -101,11 +101,19 @@ pub fn memory(r: &mut Report) {
 pub struct Report {
     passed: u32,
     failed: u32,
+    /// Short result lines, also drawn on screen (real laptops have no serial port).
+    lines: Vec<alloc::string::String>,
+}
+
+pub struct Summary {
+    pub passed: u32,
+    pub failed: u32,
+    pub lines: Vec<alloc::string::String>,
 }
 
 impl Report {
     pub fn new() -> Self {
-        Self { passed: 0, failed: 0 }
+        Self { passed: 0, failed: 0, lines: Vec::new() }
     }
 
     pub fn check(&mut self, name: &str, ok: bool, detail: core::fmt::Arguments) {
@@ -115,10 +123,22 @@ impl Report {
             self.failed += 1;
         }
         serial_println!("AWA TEST {} {} {}", name, if ok { "PASS" } else { "FAIL" }, detail);
+        let mut line = alloc::format!("{} {} {}", if ok { "PASS" } else { "FAIL" }, name, detail);
+        line.truncate(150);
+        self.lines.push(line);
     }
 
-    pub fn finish(self) {
+    /// Prints an informational line (serial and screen) that is not a test.
+    pub fn note(&mut self, text: core::fmt::Arguments) {
+        serial_println!("AWA: {}", text);
+        let mut line = alloc::format!("     {}", text);
+        line.truncate(150);
+        self.lines.push(line);
+    }
+
+    pub fn finish(self) -> Summary {
         serial_println!("AWA: self-test {} passed, {} failed", self.passed, self.failed);
+        Summary { passed: self.passed, failed: self.failed, lines: self.lines }
     }
 }
 
@@ -149,14 +169,18 @@ pub fn timer(r: &mut Report) {
         apic::wait_for_interrupt();
     }
     let ticks = apic::TICKS.load(Ordering::Relaxed) - start;
+    let gap_us = apic::MAX_TICK_GAP.load(Ordering::Relaxed) as u128 * 1_000_000 / tsc_hz.max(1) as u128;
     let expected = apic::TICK_HZ;
-    let tolerance_pct = if virtualized { 30 } else { 3 };
-    let ok = ticks * 100 >= expected * (100 - tolerance_pct) && ticks * 100 <= expected * (100 + tolerance_pct);
-    r.check(
-        "timer-rate",
-        ok,
-        format_args!("{} ticks in 1 s of TSC time (expected {} +/-{}%{})", ticks, expected, tolerance_pct, if virtualized { ", running under a hypervisor" } else { "" }),
-    );
+    if virtualized {
+        // Under a hypervisor the host decides when virtual timer interrupts
+        // arrive (QEMU on Windows: host timer granularity ~15.6 ms), so the
+        // rate is reported, and only "the timer runs" is judged. (D-036)
+        r.note(format_args!("timer under a hypervisor: {} of {} ticks in 1 s, longest gap {} us (host-limited, not judged)", ticks, expected, gap_us));
+        r.check("timer-runs", ticks > 0, format_args!("{} timer interrupts in 1 s", ticks));
+    } else {
+        let ok = ticks * 100 >= expected * 97 && ticks * 100 <= expected * 103;
+        r.check("timer-rate", ok, format_args!("{} ticks in 1 s (expected {} +/-3%), longest gap {} us", ticks, expected, gap_us));
+    }
 }
 
 /// Random numbers: the ChaCha20 core matches RFC 8439, and output looks random.
@@ -179,4 +203,208 @@ pub fn random(r: &mut Report) {
     }
     let mean = ones as f64 / 1000.0;
     r.check("rng-output", (31.0..=33.0).contains(&mean) && repeats == 0, format_args!("1000 values: mean {:.2} set bits of 64, {} repeats", mean, repeats));
+}
+
+// ---------------------------------------------------------------- scheduler (Phase 3)
+
+use crate::sched::{self, Class, Reservation, SpawnOptions};
+use core::sync::atomic::{AtomicBool, AtomicU64 as Counter};
+
+static DONE: Counter = Counter::new(0);
+static STOP: AtomicBool = AtomicBool::new(false);
+static PROGRESS: [Counter; 2] = [Counter::new(0), Counter::new(0)];
+static CPU_SEEN: Counter = Counter::new(0);
+
+/// Busy work for `ns` nanoseconds with interrupts on, so the thread can be preempted.
+fn spin_ns(ns: u64) {
+    let end = apic::tsc() + sched::ns_to_tsc(ns);
+    while apic::tsc() < end {
+        core::hint::spin_loop();
+    }
+}
+
+/// Sleeps in 1 ms steps until `cond` holds or `timeout_ns` passes.
+fn wait_until(timeout_ns: u64, cond: impl Fn() -> bool) -> bool {
+    let end = apic::tsc() + sched::ns_to_tsc(timeout_ns);
+    while !cond() {
+        if apic::tsc() > end {
+            return false;
+        }
+        sched::sleep_ns(1_000_000);
+    }
+    true
+}
+
+fn worker(_: u64) {
+    spin_ns(2_000_000);
+    CPU_SEEN.fetch_or(1 << sched::this_cpu().index, Ordering::Relaxed);
+    DONE.fetch_add(1, Ordering::Release);
+}
+
+fn counter_loop(slot: u64) {
+    while !STOP.load(Ordering::Relaxed) {
+        PROGRESS[slot as usize].fetch_add(1, Ordering::Relaxed);
+        spin_ns(50_000);
+    }
+}
+
+fn batch_hog(_: u64) {
+    while !STOP.load(Ordering::Relaxed) {
+        spin_ns(100_000);
+    }
+}
+
+const FD_PERIOD_NS: u64 = 16_666_667; // 60 Hz, a viewport frame
+const FD_RUNTIME_NS: u64 = 4_000_000;
+const FD_WORK_NS: u64 = 1_000_000;
+const FD_FRAMES: u64 = 60;
+
+fn fd_viewport(_: u64) {
+    for _ in 0..FD_FRAMES {
+        spin_ns(FD_WORK_NS);
+        sched::wait_next_period();
+    }
+    DONE.fetch_add(1, Ordering::Release);
+}
+
+fn fd_overrunner(_: u64) {
+    for _ in 0..20 {
+        spin_ns(4_000_000); // asks for 4 ms each period but only reserved 1 ms
+        sched::wait_next_period();
+    }
+    DONE.fetch_add(1, Ordering::Release);
+}
+
+/// Phase 3 exit criteria: CPUs online, threads run and preempt, frame-deadline
+/// threads keep their deadlines under full batch load, overruns are demoted,
+/// admission control holds, gangs start together, tracing is cheap.
+pub fn scheduler(r: &mut Report, expected_cpus: usize) {
+    let online = crate::ONLINE.load(Ordering::Acquire) as usize;
+    r.check("cpus-online", online == expected_cpus, format_args!("{} of {} CPUs running the scheduler", online, expected_cpus));
+    let ncpu = sched::cpu::count().max(1);
+    let virtualized = arch::cpu::running_under_hypervisor();
+
+    // Threads run, on more than one CPU when there is more than one.
+    DONE.store(0, Ordering::Relaxed);
+    CPU_SEEN.store(0, Ordering::Relaxed);
+    let mut spawned = 0;
+    for _ in 0..8 {
+        if sched::spawn("worker", Class::Interactive, worker, 0, SpawnOptions::default()).is_ok() {
+            spawned += 1;
+        }
+    }
+    let finished = wait_until(3_000_000_000, || DONE.load(Ordering::Acquire) == spawned);
+    let cpus_used = CPU_SEEN.load(Ordering::Relaxed).count_ones() as usize;
+    r.check(
+        "threads-run",
+        spawned == 8 && finished && (ncpu == 1 || cpus_used > 1),
+        format_args!("{} of 8 threads finished, on {} CPU(s)", DONE.load(Ordering::Relaxed), cpus_used),
+    );
+
+    // Preemption: two CPU-bound threads pinned to one CPU both make progress.
+    let target = ncpu - 1;
+    STOP.store(false, Ordering::Relaxed);
+    for slot in 0..2u64 {
+        let _ = sched::spawn("counter", Class::Interactive, counter_loop, slot, SpawnOptions { pinned: Some(target), ..Default::default() });
+    }
+    sched::sleep_ns(300_000_000);
+    let (a, b) = (PROGRESS[0].load(Ordering::Relaxed), PROGRESS[1].load(Ordering::Relaxed));
+    STOP.store(true, Ordering::Relaxed);
+    r.check("preemption", a > 0 && b > 0, format_args!("two spinning threads on CPU {}: {} and {} steps in 0.3 s", target, a, b));
+    sched::sleep_ns(20_000_000);
+
+    // Admission control.
+    let c = sched::cpu::get(target);
+    let half = Reservation { runtime: sched::ns_to_tsc(5_000_000), period: sched::ns_to_tsc(10_000_000) };
+    let third = Reservation { runtime: sched::ns_to_tsc(3_000_000), period: sched::ns_to_tsc(10_000_000) };
+    let first = c.admit(half);
+    let second = c.admit(third);
+    if first {
+        c.release(half);
+    }
+    if second {
+        c.release(third);
+    }
+    r.check("fd-admission", first && !second, format_args!("50 % admitted: {}, then +30 % refused: {} (cap 70 %)", first, !second));
+
+    // Frame-deadline under load: a 60 Hz viewport thread vs batch hogs on every CPU.
+    STOP.store(false, Ordering::Relaxed);
+    for _ in 0..ncpu * 2 {
+        let _ = sched::spawn("batch-hog", Class::Batch, batch_hog, 0, SpawnOptions::default());
+    }
+    DONE.store(0, Ordering::Relaxed);
+    let res = Reservation { runtime: sched::ns_to_tsc(FD_RUNTIME_NS), period: sched::ns_to_tsc(FD_PERIOD_NS) };
+    match sched::spawn("viewport", Class::FrameDeadline, fd_viewport, 0, SpawnOptions { reservation: Some(res), pinned: Some(target), ..Default::default() }) {
+        Ok(t) => {
+            let ok = wait_until(5_000_000_000, || DONE.load(Ordering::Acquire) == 1);
+            let misses = t.stats.misses.load(Ordering::Relaxed);
+            let jobs = t.stats.jobs.load(Ordering::Relaxed);
+            let lat_us = sched::tsc_to_ns(t.stats.max_wake_latency.load(Ordering::Relaxed)) / 1000;
+            // Real hardware: zero misses. Under a hypervisor timer delivery is
+            // host-limited (see timer test), so misses are reported, not judged. (D-036)
+            let allowed = if virtualized { FD_FRAMES } else { 0 };
+            r.check(
+                "fd-deadlines-under-load",
+                ok && jobs == FD_FRAMES && misses <= allowed,
+                format_args!(
+                    "{} frames at 60 Hz with {} batch hogs: {} missed (allowed {}), worst wake-up latency {} us{}",
+                    jobs,
+                    ncpu * 2,
+                    misses,
+                    allowed,
+                    lat_us,
+                    if virtualized { " (hypervisor)" } else { "" }
+                ),
+            );
+        }
+        Err(e) => r.check("fd-deadlines-under-load", false, format_args!("spawn failed: {}", e)),
+    }
+
+    // Overrun: a frame-deadline thread that exceeds its budget is demoted, and
+    // an interactive thread on the same CPU keeps running.
+    DONE.store(0, Ordering::Relaxed);
+    PROGRESS[0].store(0, Ordering::Relaxed);
+    let _ = sched::spawn("counter", Class::Interactive, counter_loop, 0, SpawnOptions { pinned: Some(target), ..Default::default() });
+    let res = Reservation { runtime: sched::ns_to_tsc(1_000_000), period: sched::ns_to_tsc(10_000_000) };
+    match sched::spawn("overrunner", Class::FrameDeadline, fd_overrunner, 0, SpawnOptions { reservation: Some(res), pinned: Some(target), ..Default::default() }) {
+        Ok(t) => {
+            let ok = wait_until(5_000_000_000, || DONE.load(Ordering::Acquire) == 1);
+            let overruns = t.stats.overruns.load(Ordering::Relaxed);
+            let others = PROGRESS[0].load(Ordering::Relaxed);
+            r.check("fd-overrun-demoted", ok && overruns > 0 && others > 0, format_args!("{} overruns demoted; interactive neighbour made {} steps", overruns, others));
+        }
+        Err(e) => r.check("fd-overrun-demoted", false, format_args!("spawn failed: {}", e)),
+    }
+    STOP.store(true, Ordering::Relaxed);
+    sched::sleep_ns(50_000_000);
+
+    // Gang: members of a gang start close together. (Gang members are
+    // preferred over other batch work; strict co-scheduled windows are TODO.)
+    STOP.store(false, Ordering::Relaxed);
+    let mut members = alloc::vec::Vec::new();
+    for i in 0..ncpu {
+        if let Ok(t) = sched::spawn("gang", Class::Batch, batch_hog, 0, SpawnOptions { gang: Some(1), pinned: Some(i), ..Default::default() }) {
+            members.push(t);
+        }
+    }
+    let all_started = wait_until(2_000_000_000, || members.iter().all(|t| t.stats.first_run.load(Ordering::Relaxed) != 0));
+    STOP.store(true, Ordering::Relaxed);
+    let firsts: alloc::vec::Vec<u64> = members.iter().map(|t| t.stats.first_run.load(Ordering::Relaxed)).collect();
+    let skew_us = match (firsts.iter().min(), firsts.iter().max()) {
+        (Some(a), Some(b)) => sched::tsc_to_ns(b - a) / 1000,
+        _ => u64::MAX,
+    };
+    let bound_us = if virtualized { 50_000 } else { 5_000 };
+    r.check("gang-start-skew", all_started && skew_us <= bound_us, format_args!("{} gang threads started within {} us (bound {} us)", members.len(), skew_us, bound_us));
+    sched::sleep_ns(50_000_000);
+
+    // Tracing cost: emitting one event.
+    let n = 20_000u64;
+    let t0 = apic::tsc();
+    for i in 0..n {
+        crate::trace::emit(crate::trace::KIND_MARK, i, 0, t0);
+    }
+    let per_event_ns = sched::tsc_to_ns(apic::tsc() - t0) / n;
+    let events: u64 = (0..sched::cpu::count()).map(|i| sched::cpu::get(i).trace.written()).sum::<u64>();
+    r.check("trace-cost", per_event_ns < 1_000, format_args!("{} ns per event; {} events recorded so far across CPUs", per_event_ns, events));
 }

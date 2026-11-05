@@ -16,14 +16,19 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 pub const TIMER_VECTOR: u8 = 0x20;
 pub const SPURIOUS_VECTOR: u8 = 0xff;
-pub const TICK_HZ: u64 = 100;
+pub const TICK_HZ: u64 = 1000;
+pub const RESCHEDULE_VECTOR: u8 = 0xf0;
+pub const TLB_SHOOTDOWN_VECTOR: u8 = 0xf1;
 
 const MSR_APIC_BASE: u32 = 0x1b;
 const APIC_ENABLE: u64 = 1 << 11;
 const X2APIC_ENABLE: u64 = 1 << 10;
 
 // Register offsets (xAPIC MMIO); x2APIC MSR = 0x800 + offset / 16.
+const REG_ID: u32 = 0x20;
 const REG_EOI: u32 = 0xb0;
+const REG_ICR_LOW: u32 = 0x300;
+const REG_ICR_HIGH: u32 = 0x310;
 const REG_SVR: u32 = 0xf0;
 const REG_LVT_TIMER: u32 = 0x320;
 const REG_TIMER_INITIAL: u32 = 0x380;
@@ -33,10 +38,16 @@ const LVT_MASKED: u32 = 1 << 16;
 const LVT_PERIODIC: u32 = 1 << 17;
 
 static X2APIC: AtomicBool = AtomicBool::new(false);
+/// APIC timer count per tick, measured once on the boot CPU and reused on the others.
+static PER_TICK: AtomicU64 = AtomicU64::new(0);
 static MMIO_BASE: AtomicU64 = AtomicU64::new(0);
+static BOOT_APIC_ID: AtomicU64 = AtomicU64::new(u64::MAX);
 
-/// Timer interrupts since boot.
+/// Timer interrupts on the boot CPU since boot.
 pub static TICKS: AtomicU64 = AtomicU64::new(0);
+/// Longest gap between two boot-CPU timer interrupts, in TSC ticks.
+pub static MAX_TICK_GAP: AtomicU64 = AtomicU64::new(0);
+static LAST_TICK_TSC: AtomicU64 = AtomicU64::new(0);
 /// TSC ticks per second, measured at boot.
 pub static TSC_HZ: AtomicU64 = AtomicU64::new(0);
 
@@ -151,19 +162,75 @@ pub fn init(x2apic_supported: bool) -> Result<TimerInfo, &'static str> {
     TSC_HZ.store(tsc_hz, Ordering::Relaxed);
 
     let per_tick = (u64::from(elapsed) * 20 / TICK_HZ) as u32;
-    write(REG_LVT_TIMER, u32::from(TIMER_VECTOR) | LVT_PERIODIC);
-    write(REG_TIMER_INITIAL, per_tick.max(1));
+    PER_TICK.store(u64::from(per_tick.max(1)), Ordering::Relaxed);
+    BOOT_APIC_ID.store(u64::from(id()), Ordering::Relaxed);
+    idt::set_handler(RESCHEDULE_VECTOR, reschedule_interrupt);
+    start_timer();
 
     Ok(TimerInfo { x2apic: X2APIC.load(Ordering::Relaxed), apic_ticks_per_tick: per_tick, tsc_hz })
+}
+
+fn start_timer() {
+    write(REG_TIMER_DIVIDE, 0x3);
+    write(REG_LVT_TIMER, u32::from(TIMER_VECTOR) | LVT_PERIODIC);
+    write(REG_TIMER_INITIAL, PER_TICK.load(Ordering::Relaxed) as u32);
+}
+
+/// Brings up the local APIC of a secondary CPU in the same mode as the boot
+/// CPU and starts its timer with the boot CPU's calibration.
+pub fn init_secondary() {
+    let base = read_msr(MSR_APIC_BASE);
+    let x2 = X2APIC.load(Ordering::Relaxed);
+    // SAFETY: enables this CPU's own APIC (x2APIC only if the boot CPU found
+    // it supported); affects no other CPU.
+    unsafe { write_msr(MSR_APIC_BASE, base | APIC_ENABLE | if x2 { X2APIC_ENABLE } else { 0 }) };
+    write(REG_SVR, 0x100 | u32::from(SPURIOUS_VECTOR));
+    start_timer();
+}
+
+/// This CPU's local APIC ID.
+pub fn id() -> u32 {
+    if X2APIC.load(Ordering::Relaxed) { read(REG_ID) } else { read(REG_ID) >> 24 }
 }
 
 fn eoi() {
     write(REG_EOI, 0);
 }
 
+/// Sends a fixed interrupt `vector` to the CPU with local APIC ID `apic_id`.
+pub fn send_ipi(apic_id: u32, vector: u8) {
+    if X2APIC.load(Ordering::Relaxed) {
+        // SAFETY: the x2APIC ICR MSR sends one IPI; fixed delivery, physical destination.
+        unsafe { write_msr(0x830, (u64::from(apic_id) << 32) | u64::from(vector)) };
+    } else {
+        write(REG_ICR_HIGH, apic_id << 24);
+        write(REG_ICR_LOW, u32::from(vector));
+        while read(REG_ICR_LOW) & (1 << 12) != 0 {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+pub fn send_reschedule(apic_id: u32) {
+    send_ipi(apic_id, RESCHEDULE_VECTOR);
+}
+
 extern "x86-interrupt" fn timer_interrupt(_frame: InterruptStackFrame) {
-    TICKS.fetch_add(1, Ordering::Relaxed);
+    if u64::from(id()) == BOOT_APIC_ID.load(Ordering::Relaxed) {
+        TICKS.fetch_add(1, Ordering::Relaxed);
+        let now = rdtsc();
+        let last = LAST_TICK_TSC.swap(now, Ordering::Relaxed);
+        if last != 0 {
+            MAX_TICK_GAP.fetch_max(now - last, Ordering::Relaxed);
+        }
+    }
     eoi();
+    crate::sched::tick();
+}
+
+extern "x86-interrupt" fn reschedule_interrupt(_frame: InterruptStackFrame) {
+    eoi();
+    crate::sched::tick();
 }
 
 /// Spurious APIC interrupts must not be acknowledged.

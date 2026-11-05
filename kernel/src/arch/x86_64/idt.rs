@@ -94,6 +94,11 @@ pub fn init() {
     idt[21] = coded(control_protection);
     idt[0xff] = plain(spurious);
 
+    load();
+}
+
+/// Loads the shared IDT on this CPU (every CPU uses the same table).
+pub fn load() {
     #[repr(C, packed)]
     struct Pointer {
         limit: u16,

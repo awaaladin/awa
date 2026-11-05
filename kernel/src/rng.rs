@@ -6,7 +6,7 @@
 //! state once SMP is up (Phase 3).
 
 use crate::arch::{apic, cpu};
-use crate::sync::InitCell;
+use crate::sync::SpinLock;
 
 struct State {
     key: [u32; 8],
@@ -16,7 +16,7 @@ struct State {
     used: usize,
 }
 
-static STATE: InitCell<State> = InitCell::new(State { key: [0; 8], nonce: [0; 3], counter: 0, block: [0; 16], used: 16 });
+static STATE: SpinLock<State> = SpinLock::new(State { key: [0; 8], nonce: [0; 3], counter: 0, block: [0; 16], used: 16 });
 
 fn quarter(s: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     s[a] = s[a].wrapping_add(s[b]);
@@ -86,8 +86,7 @@ pub fn init(have_rdrand: bool) -> &'static str {
     key.copy_from_slice(&seed[..8]);
     let nonce = [seed[8], seed[9], seed[10]];
     let mixed = chacha20_block(&key, 0, &nonce);
-    // SAFETY: single boot CPU; runs before anything draws random numbers.
-    let st = unsafe { STATE.get_mut() };
+    let mut st = STATE.lock();
     st.key.copy_from_slice(&mixed[..8]);
     st.nonce.copy_from_slice(&mixed[8..11]);
     st.counter = 1;
@@ -97,9 +96,8 @@ pub fn init(have_rdrand: bool) -> &'static str {
 
 /// Next 64 random bits.
 pub fn next_u64() -> u64 {
-    // SAFETY: single boot CPU and never called from interrupt handlers.
-    // TODO(awa): per-CPU generators in Phase 3.
-    let st = unsafe { STATE.get_mut() };
+    // TODO(awa): per-CPU generators if this lock ever shows up in profiles.
+    let mut st = STATE.lock();
     if st.used + 2 > 16 {
         st.block = chacha20_block(&st.key, st.counter, &st.nonce);
         st.counter = st.counter.wrapping_add(1);

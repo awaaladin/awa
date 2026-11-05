@@ -90,6 +90,73 @@ static HHDM_REQUEST: Request<HhdmResponse> = Request::new([0x48dc_f1cb_8ad2_b852
 static EXECUTABLE_ADDRESS_REQUEST: Request<ExecutableAddressResponse> =
     Request::new([0x71ba_7686_3cc5_5f63, 0xb264_4a48_c516_a487], 0);
 
+/// The multiprocessor request has an extra `flags` field after the response.
+#[repr(C)]
+struct MpRequest {
+    id: [u64; 4],
+    revision: u64,
+    response: UnsafeCell<*const MpResponse>,
+    flags: u64,
+}
+
+// SAFETY: as for `Request`: written once by the bootloader before the kernel runs.
+unsafe impl Sync for MpRequest {}
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static MP_REQUEST: MpRequest = MpRequest {
+    id: [COMMON_MAGIC[0], COMMON_MAGIC[1], 0x95a6_7b81_9a1b_857e, 0xa0b6_1b72_3b6a_73e0],
+    revision: 0,
+    response: UnsafeCell::new(ptr::null()),
+    flags: 1, // ask Limine to enable x2APIC on every CPU when the hardware has it
+};
+
+#[repr(C)]
+struct MpResponse {
+    revision: u64,
+    flags: u32,
+    bsp_lapic_id: u32,
+    cpu_count: u64,
+    cpus: *const *mut MpInfo,
+}
+
+/// One CPU as described by Limine. Writing `goto_address` starts it.
+#[repr(C)]
+pub struct MpInfo {
+    pub processor_id: u32,
+    pub lapic_id: u32,
+    _reserved: u64,
+    goto_address: core::sync::atomic::AtomicU64,
+    pub extra_argument: u64,
+}
+
+impl MpInfo {
+    /// Starts this (parked) CPU at `entry`, which receives a pointer to this record.
+    pub fn start(&self, entry: extern "C" fn(&'static MpInfo) -> !) {
+        self.goto_address.store(entry as usize as u64, core::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+pub struct Cpus {
+    pub bsp_lapic_id: u32,
+    pub list: &'static [&'static MpInfo],
+}
+
+/// Every CPU Limine found (including the boot CPU), or None on a bootloader
+/// that did not answer the request.
+pub fn cpus() -> Option<Cpus> {
+    // SAFETY: as in `Request::response`.
+    let r = unsafe { ptr::read_volatile(MP_REQUEST.response.get()).as_ref() }?;
+    if r.cpus.is_null() {
+        return None;
+    }
+    // SAFETY: Limine guarantees `cpus` points to `cpu_count` valid MpInfo
+    // pointers that live as long as the kernel (bootloader-reclaimable memory
+    // is never reused). The records are only modified through atomics.
+    let list = unsafe { core::slice::from_raw_parts(r.cpus as *const &'static MpInfo, r.cpu_count as usize) };
+    Some(Cpus { bsp_lapic_id: r.bsp_lapic_id, list })
+}
+
 #[used]
 #[unsafe(link_section = ".requests_end_marker")]
 static REQUESTS_END: [u64; 2] = [0xadc0_e053_1bb1_0d03, 0x9572_709f_3176_4c62];

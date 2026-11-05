@@ -108,6 +108,19 @@ impl Console {
         self.draw_text(BANNER_X, BANNER_Y, text, BANNER_SCALE);
     }
 
+    /// Draws lines of small text under the banner (boot self-test results).
+    pub fn draw_lines(&mut self, lines: &[alloc::string::String]) {
+        let line_height = 18;
+        let top = BANNER_Y + 16 * BANNER_SCALE + 24;
+        for (i, line) in lines.iter().enumerate() {
+            let y = top + i * line_height;
+            if y + 16 > self.fb.height() {
+                break;
+            }
+            self.draw_text(BANNER_X, y, line, 1);
+        }
+    }
+
     fn draw_text(&mut self, x: usize, y: usize, text: &str, scale: usize) {
         let advance = get_raster_width(FONT_WEIGHT, FONT_HEIGHT) * scale;
         for (i, ch) in text.chars().enumerate() {

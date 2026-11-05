@@ -7,7 +7,7 @@
 
 use super::{phys_to_virt, PAGE_SIZE};
 use crate::boot::{MemKind, MemoryMap};
-use crate::sync::InitCell;
+use crate::sync::SpinLock;
 
 const LOW_MEMORY_END: u64 = 1 << 20;
 
@@ -22,7 +22,7 @@ struct Bitmap {
     cursor: usize,
 }
 
-static FRAMES: InitCell<Option<Bitmap>> = InitCell::new(None);
+static FRAMES: SpinLock<Option<Bitmap>> = SpinLock::new(None);
 
 #[derive(Clone, Copy, Debug)]
 pub struct Stats {
@@ -30,11 +30,6 @@ pub struct Stats {
     pub free: usize,
 }
 
-fn bitmap() -> &'static mut Bitmap {
-    // SAFETY: single boot CPU with interrupts disabled whenever frames are
-    // allocated (no interrupt handler allocates). TODO(awa): lock in Phase 3.
-    unsafe { FRAMES.get_mut() }.as_mut().expect("frame allocator used before init")
-}
 
 pub fn init(map: &MemoryMap) -> Result<Stats, &'static str> {
     let top = map
@@ -77,8 +72,7 @@ pub fn init(map: &MemoryMap) -> Result<Stats, &'static str> {
 
     bm.usable = bm.free;
     let stats = Stats { total: bm.usable, free: bm.free };
-    // SAFETY: single boot CPU, nothing else references FRAMES yet.
-    unsafe { *FRAMES.get_mut() = Some(bm) };
+    *FRAMES.lock() = Some(bm);
     Ok(stats)
 }
 
@@ -107,7 +101,8 @@ impl Bitmap {
 
 /// Allocates one 4 KiB frame; returns its physical address. Contents are undefined.
 pub fn alloc() -> Option<u64> {
-    let bm = bitmap();
+    let mut guard = FRAMES.lock();
+    let bm = guard.as_mut().expect("frame allocator used before init");
     let n = bm.words.len();
     for i in 0..n {
         let w = (bm.cursor + i) % n;
@@ -142,7 +137,8 @@ pub fn alloc_zeroed() -> Option<u64> {
 /// On a double free or an address that was never allocatable: both are kernel bugs.
 pub fn free(addr: u64) {
     assert!(addr % PAGE_SIZE == 0, "freeing unaligned frame {addr:#x}");
-    let bm = bitmap();
+    let mut guard = FRAMES.lock();
+    let bm = guard.as_mut().expect("frame allocator used before init");
     let (w, bit) = Bitmap::index(addr);
     assert!(w < bm.words.len() && bm.words[w] & bit != 0, "double free of frame {addr:#x}");
     bm.words[w] &= !bit;
@@ -150,6 +146,7 @@ pub fn free(addr: u64) {
 }
 
 pub fn stats() -> Stats {
-    let bm = bitmap();
+    let guard = FRAMES.lock();
+    let bm = guard.as_ref().expect("frame allocator used before init");
     Stats { total: bm.usable, free: bm.free }
 }

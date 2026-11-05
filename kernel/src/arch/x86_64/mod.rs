@@ -1,6 +1,7 @@
 //! x86_64 primitives. Inline assembly is only allowed under `arch/`.
 
 pub mod apic;
+pub mod context;
 pub mod cpu;
 pub mod gdt;
 pub mod idt;
@@ -23,6 +24,39 @@ pub fn halt_forever() -> ! {
         // loop puts it straight back to sleep.
         unsafe { asm!("cli", "hlt", options(nomem, nostack)) };
     }
+}
+
+pub fn interrupts_enabled() -> bool {
+    let flags: u64;
+    // SAFETY: reads RFLAGS through the stack; no other effect.
+    unsafe { asm!("pushfq", "pop {}", out(reg) flags, options(nomem, preserves_flags)) };
+    flags & (1 << 9) != 0
+}
+
+pub fn disable_interrupts() {
+    // SAFETY: masking interrupts cannot break memory safety.
+    unsafe { asm!("cli", options(nomem, nostack)) };
+}
+
+pub fn enable_interrupts() {
+    // SAFETY: the IDT has a handler for every vector that can fire.
+    unsafe { asm!("sti", options(nomem, nostack)) };
+}
+
+/// Points GS at this CPU's per-CPU block (its first field must be a pointer to itself).
+pub fn set_cpu_local(ptr: u64) {
+    // SAFETY: IA32_GS_BASE only changes what `gs:` addresses refer to; kernel
+    // code reads per-CPU data only through `cpu_local`.
+    unsafe { cpu::write_msr(0xC000_0101, ptr) };
+}
+
+/// The per-CPU block set with `set_cpu_local`.
+pub fn cpu_local() -> u64 {
+    let p: u64;
+    // SAFETY: reads the self pointer at gs:0, which `set_cpu_local` set up
+    // before any caller can run on this CPU.
+    unsafe { asm!("mov {}, gs:[0]", out(reg) p, options(nostack, preserves_flags, readonly)) };
+    p
 }
 
 /// Raises a breakpoint exception (used by the self-test).
