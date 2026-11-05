@@ -145,15 +145,32 @@ pub fn set_ist(ist: u8, stack_top: u64) {
     unsafe { BOOT_TSS.get_mut().ist[usize::from(ist - 1)] = stack_top };
 }
 
+/// The boot CPU's TSS (for `set_rsp0`).
+pub fn boot_tss() -> *mut Tss {
+    BOOT_TSS.as_ptr()
+}
+
+/// Sets the stack the CPU switches to when an interrupt arrives in ring 3.
+///
+/// # Safety
+/// `tss` must be this CPU's own TSS (from `boot_tss` or `init_secondary`).
+pub unsafe fn set_rsp0(tss: *mut Tss, top: u64) {
+    // SAFETY: `tss` is valid and owned by this CPU (caller); the field is
+    // inside a packed struct, so it is written unaligned.
+    unsafe { core::ptr::addr_of_mut!((*tss).rsp).cast::<u64>().write_unaligned(top) };
+}
+
 /// Secondary CPU: builds and loads its own GDT and TSS. `ist_tops` are the
-/// tops of its double-fault, NMI and machine-check stacks.
-pub fn init_secondary(ist_tops: [u64; 3]) {
+/// tops of its double-fault, NMI and machine-check stacks. Returns the TSS.
+pub fn init_secondary(ist_tops: [u64; 3]) -> *mut Tss {
     let mut tss = Box::new(Tss::empty());
     for (i, top) in ist_tops.into_iter().enumerate() {
         tss.ist[i] = top;
     }
     let tss: &'static mut Tss = Box::leak(tss);
     let gdt: &'static mut Gdt = Box::leak(Box::new(GDT_TEMPLATE));
+    let tss_ptr: *mut Tss = tss;
     // SAFETY: both were just leaked, so they live forever and belong to this CPU alone.
-    unsafe { load(gdt, tss) };
+    unsafe { load(gdt, tss_ptr) };
+    tss_ptr
 }

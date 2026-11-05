@@ -186,6 +186,12 @@ pub fn build(map: &MemoryMap, hhdm: u64, kernel_phys: u64, kernel_virt: u64) -> 
         }
     }
 
+    // Create every kernel-half top-level entry now. Process page tables copy
+    // these 256 entries once; anything the kernel maps later lands below them
+    // and is therefore visible in every process automatically.
+    for i in 256..512 {
+        next_table(&mut table(pml4)[i])?;
+    }
     *KERNEL_SPACE.lock() = Some(Space { pml4, next_stack: STACKS_BASE });
     Ok(Built { pml4, mapped_direct })
 }
@@ -245,4 +251,44 @@ pub fn map_mmio(phys: u64, len: u64, hhdm: u64) -> Result<u64, &'static str> {
         p += PAGE_SIZE;
     }
     Ok(hhdm + phys)
+}
+
+// ---------------------------------------------------------------- user address spaces
+
+const USER: u64 = 1 << 2;
+
+/// A new top-level table for a process: empty user half, shared kernel half.
+pub fn new_user_pml4() -> Result<u64, &'static str> {
+    let kernel = kernel_pml4();
+    let pml4 = frames::alloc_zeroed().ok_or("out of memory for a process page table")?;
+    let (src, dst) = (table(kernel), table(pml4));
+    dst[256..].copy_from_slice(&src[256..]);
+    Ok(pml4)
+}
+
+fn next_user_table(entry: &mut u64) -> Result<u64, &'static str> {
+    if *entry & PRESENT == 0 {
+        let frame = frames::alloc_zeroed().ok_or("out of memory for page tables")?;
+        *entry = frame | PRESENT | WRITABLE | USER;
+    }
+    Ok(*entry & ADDR_MASK)
+}
+
+/// Maps one user page. `virt` must be below USER_TOP (checked by callers).
+/// Fails if the page is already mapped (no silent replacement).
+pub fn map_user_page(pml4: u64, virt: u64, phys: u64, write: bool, execute: bool) -> Result<(), &'static str> {
+    debug_assert!(virt < 0x0000_8000_0000_0000);
+    if write && execute {
+        return Err("W^X: a page cannot be writable and executable");
+    }
+    let [i4, i3, i2, i1] = indices(virt);
+    let pdpt = next_user_table(&mut table(pml4)[i4])?;
+    let pd = next_user_table(&mut table(pdpt)[i3])?;
+    let pt = next_user_table(&mut table(pd)[i2])?;
+    let e = &mut table(pt)[i1];
+    if *e & PRESENT != 0 {
+        return Err("address already mapped");
+    }
+    *e = phys | PRESENT | USER | if write { WRITABLE } else { 0 } | if execute { 0 } else { NO_EXECUTE };
+    Ok(())
 }

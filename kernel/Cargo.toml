@@ -10,5 +10,7 @@ test = false
 bench = false
 
 [dependencies]
+awa-abi = { path = "../libawa/abi" }
+awa-elf = { path = "../libawa/elf" }
 linked_list_allocator = { version = "0.10", default-features = false }
 noto-sans-mono-bitmap = { version = "0.3", default-features = false, features = ["regular", "size_16", "unicode-basic-latin"] }

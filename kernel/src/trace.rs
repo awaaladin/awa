@@ -56,21 +56,27 @@ impl Ring {
     }
 }
 
-/// Records an event on this CPU. Cheap: one branch, one 32-byte store.
+/// Records an event on CPU `cpu`, which must be the CPU running this code
+/// with interrupts disabled (single-writer rule). Cheap: one branch and one
+/// 32-byte store; the caller already knows its CPU, so no lookup is needed.
 #[inline]
-pub fn emit(kind: u32, a: u64, b: u64, tsc: u64) {
-    if !ENABLED.load(Ordering::Relaxed) {
-        return;
+pub fn emit_on(cpu: &crate::sched::Cpu, kind: u32, a: u64, b: u64, tsc: u64) {
+    if ENABLED.load(Ordering::Relaxed) {
+        cpu.trace.push(Event { tsc, kind, cpu: cpu.index as u32, a, b });
     }
+}
+
+/// Records an event from code that does not know its CPU (looks it up).
+pub fn emit(kind: u32, a: u64, b: u64, tsc: u64) {
     let irq = crate::arch::interrupts_enabled();
     crate::arch::disable_interrupts();
-    let c = crate::sched::this_cpu();
-    c.trace.push(Event { tsc, kind, cpu: c.index as u32, a, b });
+    emit_on(crate::sched::this_cpu(), kind, a, b, tsc);
     if irq {
         crate::arch::enable_interrupts();
     }
 }
 
-pub fn switch(_cpu: usize, prev: u64, next: u64, tsc: u64) {
-    emit(KIND_SWITCH, prev, next, tsc);
+/// Context switch on CPU `cpu` (called by the scheduler, interrupts disabled).
+pub fn switch(cpu: usize, prev: u64, next: u64, tsc: u64) {
+    emit_on(crate::sched::cpu::get(cpu), KIND_SWITCH, prev, next, tsc);
 }

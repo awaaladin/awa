@@ -112,7 +112,11 @@ pub fn load() {
 
 // ---------------------------------------------------------------- reporting
 
-fn report(name: &str, frame: &InterruptStackFrame, code: Option<u64>) -> ! {
+fn report(vector: u8, name: &str, frame: &InterruptStackFrame, code: Option<u64>) -> ! {
+    if frame.cs & 3 == 3 {
+        // Raised by a user program: end that program, keep the kernel running.
+        crate::process::kill_current(vector, name, frame.rip, None);
+    }
     serial_println!("AWA: KERNEL PANIC: CPU exception: {}", name);
     if let Some(code) = code {
         serial_println!("  error code {:#x}", code);
@@ -163,15 +167,19 @@ extern "x86-interrupt" fn breakpoint(_frame: InterruptStackFrame) {
 
 extern "x86-interrupt" fn page_fault(mut frame: InterruptStackFrame, code: u64) {
     let addr = cr2();
-    if let Some(resume) = probe::recover(frame.rip, addr, code) {
+    let recovered = probe::recover(frame.rip, addr, code).or_else(|| super::syscall::recover(frame.rip));
+    if let Some(resume) = recovered {
         // SAFETY: with the x86-interrupt ABI `frame` is the CPU-pushed frame on
         // the stack; changing rip makes `iretq` resume at the probe's recovery
         // label, which is valid code in this kernel.
         unsafe { core::ptr::write_volatile(&mut frame.rip, resume) };
         return;
     }
+    if frame.cs & 3 == 3 {
+        crate::process::kill_current(14, describe_pf(code), frame.rip, Some(addr));
+    }
     serial_println!("AWA: page fault at {:#018x} ({})", addr, describe_pf(code));
-    report("page fault", &frame, Some(code));
+    report(14, "page fault", &frame, Some(code));
 }
 
 fn describe_pf(code: u64) -> &'static str {
@@ -185,39 +193,39 @@ fn describe_pf(code: u64) -> &'static str {
 }
 
 extern "x86-interrupt" fn double_fault(frame: InterruptStackFrame, code: u64) -> ! {
-    report("double fault", &frame, Some(code))
+    report(8, "double fault", &frame, Some(code))
 }
 
 macro_rules! fatal {
-    ($name:ident, $text:literal) => {
+    ($name:ident, $vector:literal, $text:literal) => {
         extern "x86-interrupt" fn $name(frame: InterruptStackFrame) {
-            report($text, &frame, None)
+            report($vector, $text, &frame, None)
         }
     };
-    ($name:ident, $text:literal, code) => {
+    ($name:ident, $vector:literal, $text:literal, code) => {
         extern "x86-interrupt" fn $name(frame: InterruptStackFrame, code: u64) {
-            report($text, &frame, Some(code))
+            report($vector, $text, &frame, Some(code))
         }
     };
 }
 
-fatal!(divide_error, "divide error");
-fatal!(debug, "debug");
-fatal!(nmi, "non-maskable interrupt");
-fatal!(overflow, "overflow");
-fatal!(bound_range, "bound range exceeded");
-fatal!(invalid_opcode, "invalid opcode");
-fatal!(device_not_available, "device not available");
-fatal!(x87_floating_point, "x87 floating point");
-fatal!(machine_check, "machine check");
-fatal!(simd_floating_point, "SIMD floating point");
-fatal!(virtualization, "virtualization");
-fatal!(invalid_tss, "invalid TSS", code);
-fatal!(segment_not_present, "segment not present", code);
-fatal!(stack_segment, "stack-segment fault", code);
-fatal!(general_protection, "general protection fault", code);
-fatal!(alignment_check, "alignment check", code);
-fatal!(control_protection, "control protection", code);
+fatal!(divide_error, 0, "divide error");
+fatal!(debug, 1, "debug");
+fatal!(nmi, 2, "non-maskable interrupt");
+fatal!(overflow, 4, "overflow");
+fatal!(bound_range, 5, "bound range exceeded");
+fatal!(invalid_opcode, 6, "invalid opcode");
+fatal!(device_not_available, 7, "device not available");
+fatal!(x87_floating_point, 16, "x87 floating point");
+fatal!(machine_check, 18, "machine check");
+fatal!(simd_floating_point, 19, "SIMD floating point");
+fatal!(virtualization, 20, "virtualization");
+fatal!(invalid_tss, 10, "invalid TSS", code);
+fatal!(segment_not_present, 11, "segment not present", code);
+fatal!(stack_segment, 12, "stack-segment fault", code);
+fatal!(general_protection, 13, "general protection fault", code);
+fatal!(alignment_check, 17, "alignment check", code);
+fatal!(control_protection, 21, "control protection", code);
 
 /// Spurious interrupts need no EOI and no action.
 extern "x86-interrupt" fn spurious(_frame: InterruptStackFrame) {}

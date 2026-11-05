@@ -1,0 +1,9 @@
+[package]
+name = "awa-elf"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Minimal ELF64 reader for AWA: loadable segments and relative relocations. Used by the kernel (to load init) and by init (to load everything else)."
+
+[lib]
+test = false

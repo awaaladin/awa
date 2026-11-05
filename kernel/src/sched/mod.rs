@@ -21,6 +21,8 @@ use crate::mem::paging;
 use crate::sync::SpinLock;
 use crate::trace;
 use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
 pub use cpu::{this_cpu, Cpu};
@@ -44,6 +46,8 @@ pub enum State {
     Ready,
     Running,
     Sleeping,
+    /// Waiting for an event (a message, a process exit); in no run queue.
+    Blocked,
     Dead,
 }
 
@@ -71,6 +75,11 @@ pub struct Params {
     demoted: bool,
     /// Set when a frame-deadline job is released; used to measure wakeup latency.
     released_at: u64,
+    /// True from the moment a CPU picks this thread until its context has
+    /// been saved on the way out (see `finish_switch`).
+    on_cpu: bool,
+    /// A wake-up arrived before the thread managed to block.
+    wake_pending: bool,
 }
 
 /// Counters kept for every thread (always on).
@@ -94,6 +103,10 @@ pub struct Thread {
     rsp: UnsafeCell<u64>,
     entry: Option<fn(u64)>,
     arg: u64,
+    /// Top of this thread's own kernel stack (0 for adopted boot threads).
+    pub kstack_top: u64,
+    /// The process a user thread belongs to (None for kernel threads).
+    pub process: Option<Arc<crate::process::Process>>,
     pub sched: SpinLock<Params>,
     pub stats: Stats,
 }
@@ -118,12 +131,18 @@ pub fn tsc_to_ns(t: u64) -> u64 {
 }
 
 fn new_thread(name: &'static str, class: Class, entry: Option<fn(u64)>, arg: u64) -> &'static Thread {
+    new_thread_full(name, class, entry, arg, 0, None)
+}
+
+fn new_thread_full(name: &'static str, class: Class, entry: Option<fn(u64)>, arg: u64, kstack_top: u64, process: Option<Arc<crate::process::Process>>) -> &'static Thread {
     Box::leak(Box::new(Thread {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         name,
         rsp: UnsafeCell::new(0),
         entry,
         arg,
+        kstack_top,
+        process,
         sched: SpinLock::new(Params {
             class,
             state: State::Ready,
@@ -139,6 +158,8 @@ fn new_thread(name: &'static str, class: Class, entry: Option<fn(u64)>, arg: u64
             budget: 0,
             demoted: false,
             released_at: 0,
+            on_cpu: false,
+            wake_pending: false,
         }),
         stats: Stats::default(),
     }))
@@ -147,7 +168,11 @@ fn new_thread(name: &'static str, class: Class, entry: Option<fn(u64)>, arg: u64
 /// Represents the code already running on a CPU (boot path) as a thread.
 pub fn adopt_current(name: &'static str, class: Class) -> &'static Thread {
     let t = new_thread(name, class, None, 0);
-    t.sched.lock().state = State::Running;
+    {
+        let mut p = t.sched.lock();
+        p.state = State::Running;
+        p.on_cpu = true;
+    }
     t
 }
 
@@ -292,6 +317,11 @@ fn schedule_with(block: Option<(State, u64)>) {
             let mut p = prev.sched.lock();
             account(prev, &mut p, now);
             match block {
+                // A wake-up raced ahead of the block: do not block.
+                Some((State::Blocked, _)) if p.wake_pending => {
+                    p.wake_pending = false;
+                    p.state = State::Ready;
+                }
                 Some((state, wake_at)) => {
                     p.state = state;
                     p.wake_at = wake_at;
@@ -343,6 +373,7 @@ fn schedule_with(block: Option<(State, u64)>) {
         {
             let mut p = next.sched.lock();
             p.state = State::Running;
+            p.on_cpu = true;
             p.cpu = c.index;
             p.last_start = now;
             p.slice_start = now;
@@ -359,6 +390,19 @@ fn schedule_with(block: Option<(State, u64)>) {
         trace::switch(c.index, prev.id, next.id, now);
         c.set_current(next);
         c.set_prev(prev);
+        // A user thread needs its process's page tables, and its own kernel
+        // stack for interrupts and syscalls arriving from ring 3. Kernel
+        // threads keep whatever page tables are loaded (the kernel half is the
+        // same everywhere).
+        if let Some(proc_) = &next.process {
+            c.set_kernel_stack(next.kstack_top);
+            let pml4 = proc_.pml4();
+            if crate::arch::cpu::read_cr3() & !0xfff != pml4 {
+                // SAFETY: a process page table maps the whole kernel half
+                // (copied from the kernel's), including this code and stack.
+                unsafe { crate::arch::cpu::write_cr3(pml4) };
+            }
+        }
     }
     // SAFETY: `next` is not in any run queue and not running anywhere (we
     // just removed it, or it is this CPU's idle thread), so its saved rsp is
@@ -377,7 +421,8 @@ fn finish_switch() {
     let c = this_cpu();
     if let Some(prev) = c.take_prev() {
         let (ready, target) = {
-            let p = prev.sched.lock();
+            let mut p = prev.sched.lock();
+            p.on_cpu = false;
             (p.state == State::Ready && p.class != Class::Idle, p.pinned.unwrap_or(p.cpu))
         };
         if ready {
@@ -554,4 +599,100 @@ pub fn admit_into(rq: &mut RunQueue, r: Reservation) -> bool {
 pub fn release_from(rq: &mut RunQueue, r: Reservation) {
     let pct = r.runtime * 100 / r.period.max(1);
     rq.fd_load_percent = rq.fd_load_percent.saturating_sub(pct);
+}
+
+// ---------------------------------------------------------------- blocking
+
+/// Threads waiting for something. Wakers call `wake_all` after changing the
+/// condition the waiters check.
+pub struct WaitQueue(SpinLock<Vec<&'static Thread>>);
+
+impl WaitQueue {
+    pub const fn new() -> Self {
+        Self(SpinLock::new(Vec::new()))
+    }
+
+    pub fn wake_all(&self) {
+        let waiters = core::mem::take(&mut *self.0.lock());
+        for t in waiters {
+            wake(t);
+        }
+    }
+}
+
+/// Makes a blocked thread runnable again. Safe against every race with the
+/// thread going to sleep: if it has not blocked yet, the wake-up is remembered.
+pub fn wake(t: &'static Thread) {
+    let target = {
+        let mut p = t.sched.lock();
+        match p.state {
+            State::Blocked => {
+                p.state = State::Ready;
+                if p.on_cpu {
+                    // Still switching away on its CPU: `finish_switch` will
+                    // see it is ready and queue it.
+                    return;
+                }
+                p.pinned.unwrap_or(p.cpu)
+            }
+            State::Dead => return,
+            _ => {
+                p.wake_pending = true;
+                return;
+            }
+        }
+    };
+    enqueue(t, target);
+}
+
+/// Blocks the current thread until `ready()` is true.
+pub fn wait_event(queue: &WaitQueue, ready: impl Fn() -> bool) {
+    loop {
+        if ready() {
+            return;
+        }
+        let me = current();
+        queue.0.lock().push(me);
+        if ready() {
+            queue.0.lock().retain(|t| !core::ptr::eq(*t, me));
+            return;
+        }
+        schedule_with(Some((State::Blocked, 0)));
+        // Clear any wake-up that arrived after we had already decided not to block.
+        me.sched.lock().wake_pending = false;
+    }
+}
+
+// ---------------------------------------------------------------- user threads
+
+const USER_KSTACK_PAGES: u64 = 16; // 64 KiB kernel stack per user thread
+
+struct UserStart {
+    rip: u64,
+    rsp: u64,
+    args: [u64; 3],
+}
+
+fn user_trampoline(arg: u64) {
+    // SAFETY: `arg` is the Box<UserStart> leaked by `spawn_user` for this thread.
+    let start = unsafe { Box::from_raw(arg as *mut UserStart) };
+    let (rip, rsp, a) = (start.rip, start.rsp, start.args);
+    drop(start);
+    // SAFETY: we were switched to by `schedule_with`, which loaded this
+    // process's page tables and pointed rsp0/scratch at this thread's kernel
+    // stack; `spawn_user` was given a mapped entry and stack.
+    unsafe { crate::arch::syscall::enter_user(rip, rsp, a[0], a[1], a[2]) }
+}
+
+/// Starts the main thread of `process` at user address `rip` with stack `rsp`.
+pub fn spawn_user(process: Arc<crate::process::Process>, name: &'static str, rip: u64, rsp: u64, args: [u64; 3]) -> Result<&'static Thread, &'static str> {
+    let stack = paging::new_stack(USER_KSTACK_PAGES)?;
+    let start = Box::into_raw(Box::new(UserStart { rip, rsp, args })) as u64;
+    let t = new_thread_full(name, Class::Interactive, Some(user_trampoline), start, stack.top, Some(process));
+    // SAFETY: `stack.top` is the aligned top of a fresh stack owned by `t`.
+    unsafe { *t.rsp.get() = context::prepare_stack(stack.top, t as *const Thread as u64) };
+    let target = cpu::least_loaded();
+    t.sched.lock().cpu = target;
+    enqueue(t, target);
+    Ok(t)
 }

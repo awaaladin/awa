@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["kernel", "tools/mkimage"]
+# User programs build separately (different code model), see userland/Cargo.toml.
+exclude = ["userland"]
 # The kernel only builds for x86_64-unknown-none; `tools/awa.py build` passes the target.
 default-members = ["tools/mkimage"]
 

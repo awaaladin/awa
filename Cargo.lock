@@ -3,9 +3,19 @@
 version = 4
 
 [[package]]
+name = "awa-abi"
+version = "0.1.0"
+
+[[package]]
+name = "awa-elf"
+version = "0.1.0"
+
+[[package]]
 name = "awa-kernel"
 version = "0.1.0"
 dependencies = [
+ "awa-abi",
+ "awa-elf",
  "linked_list_allocator",
  "noto-sans-mono-bitmap",
 ]

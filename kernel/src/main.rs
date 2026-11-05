@@ -16,11 +16,14 @@ mod arch;
 mod boot;
 mod console;
 mod mem;
+mod object;
+mod process;
 mod rng;
 mod sched;
 mod selftest;
 mod serial;
 mod sync;
+mod syscall;
 mod trace;
 
 use arch::{apic, cpu, gdt};
@@ -115,7 +118,7 @@ extern "C" fn kmain_on_kernel_stack() -> ! {
 
     // The boot CPU becomes CPU 0 of the scheduler; this code continues as the
     // interactive thread "kmain".
-    let me = sched::cpu::register_this(0, apic::id());
+    let me = sched::cpu::register_this(0, apic::id(), gdt::boot_tss());
     let boot_thread = sched::adopt_current("kmain", sched::Class::Interactive);
     match sched::new_idle(0) {
         Ok(idle) => me.set_idle(idle),
@@ -136,6 +139,7 @@ extern "C" fn kmain_on_kernel_stack() -> ! {
     selftest::memory(&mut tests);
     selftest::random(&mut tests);
     selftest::scheduler(&mut tests, expected);
+    run_init(&mut tests);
     let summary = tests.finish();
 
     match boot::take_framebuffer() {
@@ -154,6 +158,43 @@ extern "C" fn kmain_on_kernel_stack() -> ! {
     serial_println!("{}", BOOT_MESSAGE);
     // The boot work is done; this thread ends and the CPUs keep scheduling.
     sched::exit()
+}
+
+// ---------------------------------------------------------------- user space
+
+/// Starts init (the first user program) with every other boot file, waits for
+/// it to finish its self-tests, and adds its results to the report.
+fn run_init(tests: &mut selftest::Report) {
+    if let Err(e) = process::init_vdso() {
+        tests.check("init-started", false, format_args!("vDSO: {}", e));
+        return;
+    }
+    let modules = boot::modules();
+    let Some(init) = modules.iter().find(|m| m.name == "init") else {
+        tests.check("init-started", false, format_args!("no 'init' module in the boot files"));
+        return;
+    };
+    let files: alloc::vec::Vec<(&str, &[u8])> = modules.iter().filter(|m| m.name != "init").map(|m| (m.name, m.bytes)).collect();
+    let p = match process::start_init(init.bytes, &files) {
+        Ok(p) => p,
+        Err(e) => {
+            tests.check("init-started", false, format_args!("{}", e));
+            return;
+        }
+    };
+    serial_println!("AWA: started init (process {}) with {} boot files", p.id, files.len());
+    let deadline = apic::tsc() + apic::TSC_HZ.load(Ordering::Relaxed) * 120;
+    while p.status().is_none() && apic::tsc() < deadline {
+        sched::sleep_ns(5_000_000);
+    }
+    for (name, ok, detail) in syscall::USER_RESULTS.lock().drain(..) {
+        tests.check(&name, ok, format_args!("{}", detail));
+    }
+    match p.status() {
+        Some(0) => tests.check("init-exit", true, format_args!("init finished and exited with code 0")),
+        Some(s) => tests.check("init-exit", false, format_args!("init ended with status {:#x}", s)),
+        None => tests.check("init-exit", false, format_args!("init did not finish within 120 s")),
+    }
 }
 
 // ---------------------------------------------------------------- other CPUs
@@ -214,12 +255,12 @@ extern "C" fn ap_main() -> ! {
             Err(e) => panic!("CPU IST stack: {e}"),
         };
     }
-    gdt::init_secondary(ist);
+    let tss = gdt::init_secondary(ist);
     arch::idt::load();
     apic::init_secondary();
     let cpus = boot::cpus().expect("started by Limine, so the CPU list exists");
     let index = cpu_index(&cpus, apic::id());
-    let me = sched::cpu::register_this(index, apic::id());
+    let me = sched::cpu::register_this(index, apic::id(), tss);
     // This CPU's start-up code becomes its idle thread.
     let idle = sched::adopt_current("idle", sched::Class::Idle);
     me.set_idle(idle);

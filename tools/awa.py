@@ -114,9 +114,27 @@ def cargo() -> str:
     sys.exit("awa: cargo not found")
 
 
+# User programs loaded next to the kernel (Limine modules), in boot order.
+PROGRAMS = ["init", "ping", "pong", "crashme", "noperm"]
+
+KERNEL_RUSTFLAGS = "-C code-model=kernel -C relocation-model=static -C force-frame-pointers=yes"
+USER_RUSTFLAGS = "-C relocation-model=pie -C force-frame-pointers=yes"
+
+
+def build_programs() -> dict:
+    """Builds the user programs (position-independent, ordinary code model)."""
+    env = cargo_env()
+    env["CARGO_TARGET_DIR"] = str(build_dir() / "target-user")
+    env["RUSTFLAGS"] = USER_RUSTFLAGS
+    run([cargo(), "build", "--release", "--target", "x86_64-unknown-none"], cwd=ROOT / "userland", env=env)
+    out = Path(env["CARGO_TARGET_DIR"]) / "x86_64-unknown-none" / "release"
+    return {name: out / name for name in PROGRAMS}
+
+
 def cmd_build(_args=None) -> tuple[Path, Path]:
     env = cargo_env()
-    run([cargo(), "build", "--release", "-p", "awa-kernel", "--target", "x86_64-unknown-none"], cwd=ROOT, env=env)
+    kenv = dict(env, RUSTFLAGS=KERNEL_RUSTFLAGS)
+    run([cargo(), "build", "--release", "-p", "awa-kernel", "--target", "x86_64-unknown-none"], cwd=ROOT, env=kenv)
     run([cargo(), "build", "--release", "-p", "awa-mkimage"], cwd=ROOT, env=env)
     target = Path(env["CARGO_TARGET_DIR"])
     kernel = target / "x86_64-unknown-none" / "release" / "awa-kernel"
@@ -145,11 +163,13 @@ def verify_limine() -> Path:
 
 def cmd_image(_args=None) -> Path:
     kernel, mkimage = cmd_build()
+    programs = build_programs()
     ldir = verify_limine()
     out = build_dir() / "awa.img"
     run([
         mkimage, out, 64,
         f"boot/awa-kernel={kernel}",
+        *[f"boot/{name}={path}" for name, path in programs.items()],
         f"boot/limine/limine.conf={ROOT / 'boot' / 'limine.conf'}",
         f"boot/limine/limine-bios.sys={ldir / 'limine-bios.sys'}",
         f"EFI/BOOT/BOOTX64.EFI={ldir / 'BOOTX64.EFI'}",
@@ -175,11 +195,13 @@ def cmd_usb(args) -> None:
     if not root.is_dir():
         sys.exit(f"awa: drive {args.drive} not found")
     kernel, _ = cmd_build()
+    programs = build_programs()
     ldir = verify_limine()
     plan = {
         root / "EFI" / "BOOT" / "BOOTX64.EFI": ldir / "BOOTX64.EFI",
         root / "boot" / "limine" / "limine.conf": ROOT / "boot" / "limine.conf",
         root / "boot" / "awa-kernel": kernel,
+        **{root / "boot" / name: path for name, path in programs.items()},
     }
     marker = root / "boot" / "awa-installed.txt"
     for dest, src in plan.items():

@@ -158,6 +158,56 @@ pub fn cpus() -> Option<Cpus> {
 }
 
 #[used]
+#[unsafe(link_section = ".requests")]
+static MODULE_REQUEST: Request<ModuleResponse> = Request::new([0x3e7e_2797_02be_32af, 0xca1c_4f3b_d128_0cee], 0);
+
+#[repr(C)]
+struct ModuleResponse {
+    revision: u64,
+    module_count: u64,
+    modules: *const *const LimineFile,
+}
+
+#[repr(C)]
+struct LimineFile {
+    revision: u64,
+    address: *const u8,
+    size: u64,
+    path: *const u8,
+    // more fields follow that AWA does not use
+}
+
+/// A file Limine loaded next to the kernel (from `module_path:` in limine.conf).
+pub struct Module {
+    /// File name without directories, e.g. "init".
+    pub name: &'static str,
+    pub bytes: &'static [u8],
+}
+
+pub fn modules() -> alloc::vec::Vec<Module> {
+    let mut out = alloc::vec::Vec::new();
+    let Some(r) = MODULE_REQUEST.response() else { return out };
+    if r.modules.is_null() {
+        return out;
+    }
+    for i in 0..r.module_count as usize {
+        // SAFETY: Limine guarantees `modules` holds `module_count` valid file
+        // pointers whose data and NUL-terminated path stay mapped (bootloader-
+        // reclaimable memory is never reused).
+        let f = unsafe { &**r.modules.add(i) };
+        if f.address.is_null() || f.path.is_null() {
+            continue;
+        }
+        // SAFETY: as above; `size` bytes at `address`.
+        let bytes = unsafe { core::slice::from_raw_parts(f.address, f.size as usize) };
+        // SAFETY: as above; the path is a NUL-terminated string.
+        let path = unsafe { core::ffi::CStr::from_ptr(f.path.cast()) }.to_str().unwrap_or("?");
+        out.push(Module { name: path.rsplit('/').next().unwrap_or(path), bytes });
+    }
+    out
+}
+
+#[used]
 #[unsafe(link_section = ".requests_end_marker")]
 static REQUESTS_END: [u64; 2] = [0xadc0_e053_1bb1_0d03, 0x9572_709f_3176_4c62];
 

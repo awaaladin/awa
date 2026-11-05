@@ -399,12 +399,16 @@ pub fn scheduler(r: &mut Report, expected_cpus: usize) {
     sched::sleep_ns(50_000_000);
 
     // Tracing cost: emitting one event.
+    // Measure the path the scheduler uses: CPU already known, interrupts off.
     let n = 20_000u64;
+    arch::disable_interrupts();
+    let me = sched::this_cpu();
     let t0 = apic::tsc();
     for i in 0..n {
-        crate::trace::emit(crate::trace::KIND_MARK, i, 0, t0);
+        crate::trace::emit_on(me, crate::trace::KIND_MARK, i, 0, t0);
     }
     let per_event_ns = sched::tsc_to_ns(apic::tsc() - t0) / n;
+    arch::enable_interrupts();
     let events: u64 = (0..sched::cpu::count()).map(|i| sched::cpu::get(i).trace.written()).sum::<u64>();
     r.check("trace-cost", per_event_ns < 1_000, format_args!("{} ns per event; {} events recorded so far across CPUs", per_event_ns, events));
 }

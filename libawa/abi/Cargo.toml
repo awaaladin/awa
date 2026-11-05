@@ -1,0 +1,9 @@
+[package]
+name = "awa-abi"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "The contract between the AWA kernel and programs: vDSO call slots, status codes, rights."
+
+[lib]
+test = false

@@ -21,16 +21,29 @@ pub struct Cpu {
     prev: AtomicPtr<Thread>,
     idle: AtomicPtr<Thread>,
     pub trace: trace::Ring,
+    /// This CPU's TSS (for rsp0) and syscall scratch block.
+    tss: AtomicPtr<arch::gdt::Tss>,
+    scratch: AtomicPtr<arch::syscall::Scratch>,
 }
 
 static CPUS: [AtomicPtr<Cpu>; MAX_CPUS] = [const { AtomicPtr::new(ptr::null_mut()) }; MAX_CPUS];
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Creates the per-CPU block for CPU `index` and points this CPU's GS at it.
-/// Call on the CPU itself.
-pub fn register_this(index: usize, apic_id: u32) -> &'static Cpu {
+/// Sets up CPU `index` on the CPU itself: its TSS pointer and the syscall
+/// entry. (CPUs find their block by local APIC ID, never through GS, which
+/// user programs can change.)
+pub fn register_this(index: usize, apic_id: u32, tss: *mut arch::gdt::Tss) -> &'static Cpu {
     let c = prepare(index, apic_id);
-    arch::set_cpu_local(c as *const Cpu as u64);
+    if arch::cpu::has_rdtscp() {
+        arch::cpu::set_cpu_index(index as u32);
+        if index == 0 {
+            FAST_INDEX.store(true, Ordering::Release);
+        }
+    }
+    c.tss.store(tss, Ordering::Release);
+    let scratch = Box::leak(Box::new(arch::syscall::Scratch { user_rsp: 0, kernel_rsp: 0 }));
+    c.scratch.store(scratch, Ordering::Release);
+    arch::syscall::init_cpu(scratch);
     c
 }
 
@@ -52,6 +65,8 @@ pub fn prepare(index: usize, apic_id: u32) -> &'static Cpu {
         prev: AtomicPtr::new(ptr::null_mut()),
         idle: AtomicPtr::new(ptr::null_mut()),
         trace: trace::Ring::new(),
+        tss: AtomicPtr::new(ptr::null_mut()),
+        scratch: AtomicPtr::new(ptr::null_mut()),
     }));
     c.self_ptr = c as *const Cpu as u64;
     CPUS[index].store(c, Ordering::Release);
@@ -59,10 +74,31 @@ pub fn prepare(index: usize, apic_id: u32) -> &'static Cpu {
     c
 }
 
+/// Set once when the boot CPU registers: whether RDTSCP gives the CPU index.
+static FAST_INDEX: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 pub fn this_cpu() -> &'static Cpu {
-    // SAFETY: GS base points at this CPU's leaked Cpu block (set by
-    // `register_this` before scheduling starts on it).
-    unsafe { &*(arch::cpu_local() as *const Cpu) }
+    if FAST_INDEX.load(Ordering::Relaxed) {
+        let i = arch::cpu::cpu_index_fast() as usize;
+        if i < MAX_CPUS {
+            let p = CPUS[i].load(Ordering::Acquire);
+            // SAFETY: entries are only ever set to leaked, never-freed Cpu blocks.
+            if let Some(c) = unsafe { p.as_ref() } {
+                return c;
+            }
+        }
+    }
+    let id = arch::apic::id();
+    for i in 0..count() {
+        let p = CPUS[i].load(Ordering::Acquire);
+        // SAFETY: entries are only ever set to leaked, never-freed Cpu blocks.
+        if let Some(c) = unsafe { p.as_ref() } {
+            if c.apic_id == id {
+                return c;
+            }
+        }
+    }
+    panic!("this CPU (APIC ID {id}) is not registered")
 }
 
 pub fn get(index: usize) -> &'static Cpu {
@@ -105,6 +141,17 @@ impl Cpu {
     pub fn take_prev(&self) -> Option<&'static Thread> {
         // SAFETY: as in `try_current`.
         unsafe { self.prev.swap(ptr::null_mut(), Ordering::AcqRel).as_ref() }
+    }
+
+    /// Points ring-3 interrupts and syscalls on this CPU at a thread's kernel stack.
+    pub fn set_kernel_stack(&self, top: u64) {
+        let tss = self.tss.load(Ordering::Acquire);
+        let scratch = self.scratch.load(Ordering::Acquire);
+        // SAFETY: both belong to this CPU (set in `register_this`) and live forever.
+        unsafe {
+            arch::gdt::set_rsp0(tss, top);
+            (*scratch).kernel_rsp = top;
+        }
     }
 
     pub fn set_idle(&self, t: &'static Thread) {

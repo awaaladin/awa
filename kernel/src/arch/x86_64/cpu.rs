@@ -27,6 +27,34 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
     unsafe { asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32, options(nostack, preserves_flags)) };
 }
 
+const MSR_TSC_AUX: u32 = 0xC000_0103;
+
+/// True if the CPU has RDTSCP (CPUID 0x8000_0001 EDX bit 27).
+pub fn has_rdtscp() -> bool {
+    super::cpuid(0x8000_0000, 0).0 >= 0x8000_0001 && super::cpuid(0x8000_0001, 0).3 & (1 << 27) != 0
+}
+
+/// Stores this CPU's scheduler index where RDTSCP returns it (ring 0 only can set it).
+pub fn set_cpu_index(index: u32) {
+    // SAFETY: IA32_TSC_AUX only holds a value RDTSCP reports; callers check `has_rdtscp`.
+    unsafe { write_msr(MSR_TSC_AUX, u64::from(index)) };
+}
+
+/// This CPU's index, as set by `set_cpu_index`. Only call when `has_rdtscp`.
+pub fn cpu_index_fast() -> u32 {
+    let aux: u32;
+    // SAFETY: RDTSCP reads the TSC and IA32_TSC_AUX; no memory access.
+    unsafe { asm!("rdtscp", out("ecx") aux, out("eax") _, out("edx") _, options(nomem, nostack, preserves_flags)) };
+    aux
+}
+
+pub fn read_cr3() -> u64 {
+    let v: u64;
+    // SAFETY: reading CR3 has no side effects.
+    unsafe { asm!("mov {}, cr3", out(reg) v, options(nomem, nostack, preserves_flags)) };
+    v
+}
+
 /// One RDRAND attempt. Only call when `features().rdrand` is true.
 pub fn rdrand64() -> Option<u64> {
     let v: u64;
@@ -110,6 +138,7 @@ pub fn enable_protections() -> Protections {
         if f.umip { cr4 |= CR4_UMIP; }
         asm!("mov cr4, {}", in(reg) cr4, options(nostack, preserves_flags));
     }
+    super::syscall::set_smap(f.smap);
     Protections { nx: true, write_protect: true, smep: f.smep, smap: f.smap, umip: f.umip }
 }
 

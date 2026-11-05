@@ -1,0 +1,13 @@
+[package]
+name = "awa"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "AWA's native user-space library: start-up, vDSO calls, handles, channels, memory objects, processes."
+
+[lib]
+test = false
+
+[dependencies]
+awa-abi = { path = "abi" }
+awa-elf = { path = "elf" }

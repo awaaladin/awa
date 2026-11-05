@@ -7,6 +7,7 @@ pub mod gdt;
 pub mod idt;
 pub mod port;
 pub mod probe;
+pub mod syscall;
 
 use core::arch::asm;
 
