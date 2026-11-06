@@ -10,6 +10,7 @@
 use super::{frames, phys_to_virt, PAGE_SIZE};
 use crate::boot::{MemKind, MemoryMap};
 use crate::sync::SpinLock;
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const PRESENT: u64 = 1 << 0;
 const WRITABLE: u64 = 1 << 1;
@@ -34,13 +35,30 @@ pub enum Access {
     ReadWriteCombining,
 }
 
+/// Kernel mappings are global (survive CR3 switches in the TLB) unless page-
+/// table isolation is on: then a global kernel entry would stay usable while
+/// user page tables are loaded, which is exactly what isolation prevents.
+static GLOBAL_PAGES: AtomicBool = AtomicBool::new(true);
+static KPTI: AtomicBool = AtomicBool::new(false);
+
+/// Chooses page-table isolation. Must be called before `build`.
+pub fn set_isolation(on: bool) {
+    KPTI.store(on, Ordering::Relaxed);
+    GLOBAL_PAGES.store(!on, Ordering::Relaxed);
+}
+
+pub fn isolation() -> bool {
+    KPTI.load(Ordering::Relaxed)
+}
+
 impl Access {
     fn bits(self) -> u64 {
+        let g = if GLOBAL_PAGES.load(Ordering::Relaxed) { GLOBAL } else { 0 };
         match self {
-            Access::ReadExecute => PRESENT | GLOBAL,
-            Access::ReadOnly => PRESENT | GLOBAL | NO_EXECUTE,
-            Access::ReadWrite => PRESENT | WRITABLE | GLOBAL | NO_EXECUTE,
-            Access::ReadWriteCombining => PRESENT | WRITABLE | GLOBAL | NO_EXECUTE | WRITE_THROUGH,
+            Access::ReadExecute => PRESENT | g,
+            Access::ReadOnly => PRESENT | g | NO_EXECUTE,
+            Access::ReadWrite => PRESENT | WRITABLE | g | NO_EXECUTE,
+            Access::ReadWriteCombining => PRESENT | WRITABLE | g | NO_EXECUTE | WRITE_THROUGH,
         }
     }
 }
@@ -257,13 +275,86 @@ pub fn map_mmio(phys: u64, len: u64, hhdm: u64) -> Result<u64, &'static str> {
 
 const USER: u64 = 1 << 2;
 
-/// A new top-level table for a process: empty user half, shared kernel half.
-pub fn new_user_pml4() -> Result<u64, &'static str> {
+/// Top-level tables for a new process: (kernel-mode, user-mode).
+/// The kernel-mode table shares the full kernel half. With isolation on, the
+/// user-mode table maps only the entry area of the kernel; without it, both
+/// are the same table.
+pub fn new_user_pml4() -> Result<(u64, u64), &'static str> {
     let kernel = kernel_pml4();
-    let pml4 = frames::alloc_zeroed().ok_or("out of memory for a process page table")?;
-    let (src, dst) = (table(kernel), table(pml4));
-    dst[256..].copy_from_slice(&src[256..]);
-    Ok(pml4)
+    let full = frames::alloc_zeroed().ok_or("out of memory for a process page table")?;
+    table(full)[256..].copy_from_slice(&table(kernel)[256..]);
+    if !isolation() {
+        return Ok((full, full));
+    }
+    let user = frames::alloc_zeroed().ok_or("out of memory for a process page table")?;
+    table(user)[256..].copy_from_slice(&table(SHADOW.load(Ordering::Acquire))[256..]);
+    Ok((full, user))
+}
+
+// ---------------------------------------------------------------- entry area (isolation)
+
+/// Top-level table holding only what must stay mapped while user code runs:
+/// entry code, the IDT and each CPU's entry area. Its kernel-half entries are
+/// copied into every process's user-mode table.
+static SHADOW: AtomicU64 = AtomicU64::new(0);
+
+/// Physical address behind kernel virtual address `virt` in `pml4`.
+pub fn translate_in(pml4: u64, virt: u64) -> Option<u64> {
+    let [i4, i3, i2, i1] = indices(virt);
+    let e4 = table(pml4)[i4];
+    if e4 & PRESENT == 0 {
+        return None;
+    }
+    let e3 = table(e4 & ADDR_MASK)[i3];
+    if e3 & PRESENT == 0 {
+        return None;
+    }
+    if e3 & HUGE != 0 {
+        return Some((e3 & 0x000f_ffff_c000_0000) + (virt & 0x3fff_ffff));
+    }
+    let e2 = table(e3 & ADDR_MASK)[i2];
+    if e2 & PRESENT == 0 {
+        return None;
+    }
+    if e2 & HUGE != 0 {
+        return Some((e2 & 0x000f_ffff_ffe0_0000) + (virt & 0x1f_ffff));
+    }
+    let e1 = table(e2 & ADDR_MASK)[i1];
+    if e1 & PRESENT == 0 { None } else { Some((e1 & ADDR_MASK) + (virt & 0xfff)) }
+}
+
+/// Builds the shadow table with the entry code and the IDT.
+pub fn init_entry_area(entry_text: (u64, u64), idt: (u64, u64)) -> Result<(), &'static str> {
+    if !isolation() {
+        return Ok(());
+    }
+    let shadow = frames::alloc_zeroed().ok_or("out of memory for the entry area")?;
+    // Fresh kernel-half tables (not the kernel's), so the shadow holds
+    // nothing but what is added below.
+    for i in 256..512 {
+        next_table(&mut table(shadow)[i])?;
+    }
+    SHADOW.store(shadow, Ordering::Release);
+    map_entry(entry_text.0, entry_text.1, Access::ReadExecute)?;
+    map_entry(idt.0, idt.1, Access::ReadOnly)?;
+    Ok(())
+}
+
+/// Makes [virt, virt+len) visible (at the same address) while user code runs.
+pub fn map_entry(virt: u64, len: u64, access: Access) -> Result<(), &'static str> {
+    if !isolation() {
+        return Ok(());
+    }
+    let shadow = SHADOW.load(Ordering::Acquire);
+    let kernel = kernel_pml4();
+    let _edit = KERNEL_SPACE.lock();
+    let mut v = virt / PAGE_SIZE * PAGE_SIZE;
+    while v < virt + len {
+        let phys = translate_in(kernel, v).ok_or("entry area page is not mapped")? / PAGE_SIZE * PAGE_SIZE;
+        map_4k(shadow, v, phys, access)?;
+        v += PAGE_SIZE;
+    }
+    Ok(())
 }
 
 fn next_user_table(entry: &mut u64) -> Result<u64, &'static str> {
@@ -274,15 +365,18 @@ fn next_user_table(entry: &mut u64) -> Result<u64, &'static str> {
     Ok(*entry & ADDR_MASK)
 }
 
-/// Maps one user page. `virt` must be below USER_TOP (checked by callers).
+/// Maps one user page into a process (`pml4` kernel-mode table, `user_pml4`
+/// its user-mode table). `virt` must be below USER_TOP (checked by callers).
 /// Fails if the page is already mapped (no silent replacement).
-pub fn map_user_page(pml4: u64, virt: u64, phys: u64, write: bool, execute: bool) -> Result<(), &'static str> {
+pub fn map_user_page(pml4: u64, user_pml4: u64, virt: u64, phys: u64, write: bool, execute: bool) -> Result<(), &'static str> {
     debug_assert!(virt < 0x0000_8000_0000_0000);
     if write && execute {
         return Err("W^X: a page cannot be writable and executable");
     }
     let [i4, i3, i2, i1] = indices(virt);
     let pdpt = next_user_table(&mut table(pml4)[i4])?;
+    // Both top-level tables point at the same lower-level user tables.
+    table(user_pml4)[i4] = table(pml4)[i4];
     let pd = next_user_table(&mut table(pdpt)[i3])?;
     let pt = next_user_table(&mut table(pd)[i2])?;
     let e = &mut table(pt)[i1];

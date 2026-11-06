@@ -66,7 +66,11 @@ struct Inner {
 pub struct Process {
     pub id: u64,
     pub name: String,
+    /// Page tables used while the kernel works for this process.
     pml4: u64,
+    /// Page tables used while the process itself runs (with isolation on,
+    /// the kernel is absent from them except for its entry area).
+    user_pml4: u64,
     pub vdso_base: u64,
     /// Only init may report boot self-test results.
     pub is_init: bool,
@@ -78,13 +82,14 @@ static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 
 impl Process {
     pub fn create(name: &str, is_init: bool) -> Result<Arc<Process>, Status> {
-        let pml4 = paging::new_user_pml4().map_err(|_| Status::NoMemory)?;
+        let (pml4, user_pml4) = paging::new_user_pml4().map_err(|_| Status::NoMemory)?;
         let vdso_base = random_page(0x7000_0000_0000, 0x7f00_0000_0000);
-        paging::map_user_page(pml4, vdso_base, VDSO_FRAME.load(Ordering::Relaxed), false, true).map_err(|_| Status::NoMemory)?;
+        paging::map_user_page(pml4, user_pml4, vdso_base, VDSO_FRAME.load(Ordering::Relaxed), false, true).map_err(|_| Status::NoMemory)?;
         Ok(Arc::new(Process {
             id: NEXT_PID.fetch_add(1, Ordering::Relaxed),
             name: String::from(name),
             pml4,
+            user_pml4,
             vdso_base,
             is_init,
             inner: SpinLock::new(Inner { handles: HandleTable::new(rng::next_u64() as u32), status: None, started: false, mappings: Vec::new() }),
@@ -94,6 +99,10 @@ impl Process {
 
     pub fn pml4(&self) -> u64 {
         self.pml4
+    }
+
+    pub fn user_pml4(&self) -> u64 {
+        self.user_pml4
     }
 
     pub fn with_handles<R>(&self, f: impl FnOnce(&mut HandleTable) -> R) -> R {
@@ -116,7 +125,7 @@ impl Process {
         let mut inner = self.inner.lock();
         for i in 0..len / PAGE_SIZE {
             let frame = vmo.frame(offset / PAGE_SIZE + i).ok_or(Status::OutOfRange)?;
-            paging::map_user_page(self.pml4, vaddr + i * PAGE_SIZE, frame, w, x).map_err(|_| Status::BadState)?;
+            paging::map_user_page(self.pml4, self.user_pml4, vaddr + i * PAGE_SIZE, frame, w, x).map_err(|_| Status::BadState)?;
         }
         inner.mappings.push(vmo.clone());
         Ok(())

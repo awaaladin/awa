@@ -48,6 +48,14 @@ pub fn cpu_index_fast() -> u32 {
     aux
 }
 
+/// True unless the CPU reports it is not affected by Meltdown (rogue data
+/// cache load): IA32_ARCH_CAPABILITIES.RDCL_NO. CPUs that cannot tell us
+/// (Haswell, for example) are treated as affected.
+pub fn meltdown_affected() -> bool {
+    let has_arch_caps = super::cpuid(7, 0).3 & (1 << 29) != 0;
+    !(has_arch_caps && read_msr(0x10A) & 1 != 0)
+}
+
 pub fn read_cr3() -> u64 {
     let v: u64;
     // SAFETY: reading CR3 has no side effects.

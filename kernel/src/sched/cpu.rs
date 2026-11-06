@@ -32,7 +32,7 @@ static COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Sets up CPU `index` on the CPU itself: its TSS pointer and the syscall
 /// entry. (CPUs find their block by local APIC ID, never through GS, which
 /// user programs can change.)
-pub fn register_this(index: usize, apic_id: u32, tss: *mut arch::gdt::Tss) -> &'static Cpu {
+pub fn register_this(index: usize, apic_id: u32, tss: *mut arch::gdt::Tss, scratch: *mut arch::syscall::Scratch) -> &'static Cpu {
     let c = prepare(index, apic_id);
     if arch::cpu::has_rdtscp() {
         arch::cpu::set_cpu_index(index as u32);
@@ -41,7 +41,6 @@ pub fn register_this(index: usize, apic_id: u32, tss: *mut arch::gdt::Tss) -> &'
         }
     }
     c.tss.store(tss, Ordering::Release);
-    let scratch = Box::leak(Box::new(arch::syscall::Scratch { user_rsp: 0, kernel_rsp: 0 }));
     c.scratch.store(scratch, Ordering::Release);
     arch::syscall::init_cpu(scratch);
     c
@@ -143,14 +142,16 @@ impl Cpu {
         unsafe { self.prev.swap(ptr::null_mut(), Ordering::AcqRel).as_ref() }
     }
 
-    /// Points ring-3 interrupts and syscalls on this CPU at a thread's kernel stack.
-    pub fn set_kernel_stack(&self, top: u64) {
-        let tss = self.tss.load(Ordering::Acquire);
+    /// Prepares this CPU's entry path for a user thread: its kernel stack and
+    /// its process's kernel-mode and user-mode page tables.
+    pub fn set_user_context(&self, kernel_stack_top: u64, kernel_cr3: u64, user_cr3: u64) {
         let scratch = self.scratch.load(Ordering::Acquire);
-        // SAFETY: both belong to this CPU (set in `register_this`) and live forever.
+        // SAFETY: the scratch block belongs to this CPU (set in `register_this`),
+        // lives forever, and is only read by this CPU's entry code.
         unsafe {
-            arch::gdt::set_rsp0(tss, top);
-            (*scratch).kernel_rsp = top;
+            (*scratch).kernel_rsp = kernel_stack_top;
+            (*scratch).kernel_cr3 = kernel_cr3;
+            (*scratch).user_cr3 = user_cr3;
         }
     }
 

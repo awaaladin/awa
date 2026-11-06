@@ -160,6 +160,30 @@ pub unsafe fn set_rsp0(tss: *mut Tss, top: u64) {
     unsafe { core::ptr::addr_of_mut!((*tss).rsp).cast::<u64>().write_unaligned(top) };
 }
 
+/// Builds this CPU's entry area in the page at `area` (a zeroed page that
+/// stays mapped while user code runs): syscall scratch at offset 0, GDT at
+/// 64, TSS at 128. Loads the GDT and TSS. Interrupts from user mode arrive on
+/// `entry_stack_top`; double faults, NMIs and machine checks on `ist_tops`.
+pub fn init_cpu_area(area: u64, ist_tops: [u64; 3], entry_stack_top: u64, kernel_cr3: u64) -> (*mut Tss, *mut crate::arch::syscall::Scratch) {
+    let scratch = area as *mut crate::arch::syscall::Scratch;
+    let gdt = (area + 64) as *mut Gdt;
+    let tss = (area + 128) as *mut Tss;
+    // SAFETY: `area` is a whole, zeroed, mapped page that belongs to this CPU
+    // alone; the three objects do not overlap (56 + 56 + 104 bytes at 0/64/128).
+    unsafe {
+        scratch.write(crate::arch::syscall::Scratch { user_rsp: 0, kernel_rsp: 0, kernel_cr3, user_cr3: kernel_cr3, tmp: [0; 2], entry_stack_top });
+        gdt.write(GDT_TEMPLATE);
+        let mut t = Tss::empty();
+        t.rsp[0] = entry_stack_top;
+        for (i, top) in ist_tops.into_iter().enumerate() {
+            t.ist[i] = top;
+        }
+        tss.write(t);
+        load(gdt, tss);
+    }
+    (tss, scratch)
+}
+
 /// Secondary CPU: builds and loads its own GDT and TSS. `ist_tops` are the
 /// tops of its double-fault, NMI and machine-check stacks. Returns the TSS.
 pub fn init_secondary(ist_tops: [u64; 3]) -> *mut Tss {

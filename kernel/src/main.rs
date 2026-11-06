@@ -70,6 +70,8 @@ fn init_memory() -> Result<(), &'static str> {
     let frames = mem::frames::init(&map)?;
     serial_println!("AWA: physical memory: {} MiB usable", frames.total * 4 / 1024);
 
+    // Kernel page-table isolation (Meltdown) is decided before the tables are built.
+    mem::paging::set_isolation(cpu::meltdown_affected());
     let built = mem::paging::build(&map, hhdm, kphys, kvirt)?;
     let p = cpu::enable_protections();
     cpu::program_pat();
@@ -94,7 +96,49 @@ fn init_memory() -> Result<(), &'static str> {
     }
     mem::heap::init()?;
     serial_println!("AWA: kernel stack and IST stacks have guard pages; heap {} KiB", mem::heap::HEAP_SIZE / 1024);
+
+    mem::paging::init_entry_area(entry_text(), arch::idt::table())?;
+    *BOOT_AREA.lock() = Some(make_entry_area()?);
+    serial_println!(
+        "AWA: kernel page-table isolation {}",
+        if mem::paging::isolation() { "on (CPU may be affected by Meltdown)" } else { "off (CPU reports it is not affected by Meltdown)" }
+    );
     Ok(())
+}
+
+unsafe extern "C" {
+    static __entry_start: u8;
+    static __entry_end: u8;
+}
+
+/// The entry code's address range (kept mapped while user code runs).
+fn entry_text() -> (u64, u64) {
+    // SAFETY: taking the addresses of linker symbols only.
+    let (a, b) = unsafe { (core::ptr::addr_of!(__entry_start) as u64, core::ptr::addr_of!(__entry_end) as u64) };
+    (a, b - a)
+}
+
+/// One CPU's entry area: a page for scratch/GDT/TSS, an entry stack and the
+/// three IST stacks, all also mapped in the user-mode page tables. Loads the
+/// GDT and TSS. Returns (TSS, scratch).
+type EntryArea = (u64, u64);
+static BOOT_AREA: sync::SpinLock<Option<EntryArea>> = sync::SpinLock::new(None);
+
+fn make_entry_area() -> Result<EntryArea, &'static str> {
+    use mem::paging::{map_entry, new_stack, Access};
+    let frame = mem::frames::alloc_zeroed().ok_or("out of memory for a CPU entry area")?;
+    let area = mem::phys_to_virt(frame);
+    map_entry(area, mem::PAGE_SIZE, Access::ReadWrite)?;
+    let entry = new_stack(1)?;
+    map_entry(entry.bottom, mem::PAGE_SIZE, Access::ReadWrite)?;
+    let mut ist = [0u64; 3];
+    for top in ist.iter_mut() {
+        let s = new_stack(IST_STACK_PAGES)?;
+        map_entry(s.bottom, IST_STACK_PAGES * mem::PAGE_SIZE, Access::ReadWrite)?;
+        *top = s.top;
+    }
+    let (tss, scratch) = gdt::init_cpu_area(area, ist, entry.top, cpu::read_cr3());
+    Ok((tss as u64, scratch as u64))
 }
 
 fn on(b: bool) -> &'static str {
@@ -117,7 +161,8 @@ extern "C" fn kmain_on_kernel_stack() -> ! {
 
     // The boot CPU becomes CPU 0 of the scheduler; this code continues as the
     // interactive thread "kmain".
-    let me = sched::cpu::register_this(0, apic::id(), gdt::boot_tss());
+    let (tss, scratch) = BOOT_AREA.lock().expect("entry area built in init_memory");
+    let me = sched::cpu::register_this(0, apic::id(), tss as *mut gdt::Tss, scratch as *mut arch::syscall::Scratch);
     let boot_thread = sched::adopt_current("kmain", sched::Class::Interactive);
     match sched::new_idle(0) {
         Ok(idle) => me.set_idle(idle),
@@ -182,6 +227,7 @@ fn run_init(tests: &mut selftest::Report) {
         }
     };
     serial_println!("AWA: started init (process {}) with {} boot files", p.id, files.len());
+    selftest::isolation(tests, &p, entry_text().0);
     let deadline = apic::tsc() + apic::TSC_HZ.load(Ordering::Relaxed) * 120;
     while p.status().is_none() && apic::tsc() < deadline {
         sched::sleep_ns(5_000_000);
@@ -247,19 +293,15 @@ extern "C" fn ap_entry(_info: &'static boot::MpInfo) -> ! {
 }
 
 extern "C" fn ap_main() -> ! {
-    let mut ist = [0u64; 3];
-    for top in ist.iter_mut() {
-        *top = match mem::paging::new_stack(IST_STACK_PAGES) {
-            Ok(s) => s.top,
-            Err(e) => panic!("CPU IST stack: {e}"),
-        };
-    }
-    let tss = gdt::init_secondary(ist);
+    let (tss, scratch) = match make_entry_area() {
+        Ok(a) => a,
+        Err(e) => panic!("CPU entry area: {e}"),
+    };
     arch::idt::load();
     apic::init_secondary();
     let cpus = boot::cpus().expect("started by Limine, so the CPU list exists");
     let index = cpu_index(&cpus, apic::id());
-    let me = sched::cpu::register_this(index, apic::id(), tss);
+    let me = sched::cpu::register_this(index, apic::id(), tss as *mut gdt::Tss, scratch as *mut arch::syscall::Scratch);
     // This CPU's start-up code becomes its idle thread.
     let idle = sched::adopt_current("idle", sched::Class::Idle);
     me.set_idle(idle);

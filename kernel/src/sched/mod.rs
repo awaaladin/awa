@@ -395,7 +395,7 @@ fn schedule_with(block: Option<(State, u64)>) {
         // threads keep whatever page tables are loaded (the kernel half is the
         // same everywhere).
         if let Some(proc_) = &next.process {
-            c.set_kernel_stack(next.kstack_top);
+            c.set_user_context(next.kstack_top, proc_.pml4(), proc_.user_pml4());
             let pml4 = proc_.pml4();
             if crate::arch::cpu::read_cr3() & !0xfff != pml4 {
                 // SAFETY: a process page table maps the whole kernel half

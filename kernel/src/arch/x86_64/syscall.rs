@@ -27,13 +27,23 @@ const EFER_SCE: u64 = 1;
 pub const USER_CS: u64 = 0x23;
 pub const USER_SS: u64 = 0x1b;
 
-/// Per-CPU block reached through `swapgs` at syscall entry.
+/// Per-CPU block reached through `swapgs` on every entry from user mode. It
+/// sits in the CPU's entry area, which stays mapped while user code runs.
+/// The assembly below uses these offsets.
 #[repr(C)]
 pub struct Scratch {
-    /// Temporary home of the user stack pointer during entry.
+    /// 0: temporary home of the user stack pointer.
     pub user_rsp: u64,
-    /// Top of the current thread's kernel stack.
+    /// 8: top of the current thread's kernel stack.
     pub kernel_rsp: u64,
+    /// 16: page tables to load on entry (current process, kernel mode).
+    pub kernel_cr3: u64,
+    /// 24: page tables to load on exit (current process, user mode).
+    pub user_cr3: u64,
+    /// 32, 40: register spill slots for the entry/exit code.
+    pub tmp: [u64; 2],
+    /// 48: top of this CPU's entry stack (TSS rsp0).
+    pub entry_stack_top: u64,
 }
 
 /// Registers saved at syscall entry, lowest address first.
@@ -62,10 +72,14 @@ pub struct SyscallFrame {
 }
 
 global_asm!(
+    // Entry and exit code lives in `.entry_text`: mapped while user code runs.
+    ".section .entry_text, \"ax\"",
     ".global awa_syscall_entry",
     "awa_syscall_entry:",
     "  swapgs",
     "  mov qword ptr gs:[0], rsp",
+    "  mov rsp, qword ptr gs:[16]", // kernel-mode page tables
+    "  mov cr3, rsp",
     "  mov rsp, qword ptr gs:[8]",
     "  push qword ptr gs:[0]",
     "  swapgs",
@@ -102,17 +116,33 @@ global_asm!(
     "  pop rax",
     "  pop rcx",
     "  pop r11",
-    "  pop rsp",
+    // Last value on the kernel stack is the user rsp. Park it in scratch,
+    // switch to the user-mode page tables, then load it: the kernel stack is
+    // not touched after the switch (it is not mapped any more).
+    "  swapgs",
+    "  pop qword ptr gs:[0]",
+    "  mov rsp, qword ptr gs:[24]",
+    "  mov cr3, rsp",
+    "  mov rsp, qword ptr gs:[0]",
+    "  swapgs",
     "  sysretq",
-    // fn(rip, rsp, a0, a1, a2) -> ! : first entry into ring 3.
+    // fn(rip, rsp, a0, a1, a2) -> ! : first entry into ring 3. The iret
+    // frame is built on the entry stack so the user-mode page tables can be
+    // loaded before the iret.
     ".global awa_enter_user",
     "awa_enter_user:",
     "  cli",
-    "  push {ss}",
-    "  push rsi",
-    "  push 0x202",
-    "  push {cs}",
-    "  push rdi",
+    "  swapgs",
+    "  mov rax, qword ptr gs:[48]",
+    "  mov qword ptr [rax - 8], {ss}",
+    "  mov qword ptr [rax - 16], rsi",
+    "  mov qword ptr [rax - 24], 0x202",
+    "  mov qword ptr [rax - 32], {cs}",
+    "  mov qword ptr [rax - 40], rdi",
+    "  lea rsp, [rax - 40]",
+    "  mov rax, qword ptr gs:[24]",
+    "  mov cr3, rax",
+    "  swapgs",
     "  mov rdi, rdx",
     "  mov rsi, rcx",
     "  mov rdx, r8",
@@ -129,6 +159,7 @@ global_asm!(
     "  xor r14d, r14d",
     "  xor r15d, r15d",
     "  iretq",
+    ".text",
     // fn(dst, src, len) -> 0 ok / 1 fault. Only the `rep movsb` may fault.
     ".global awa_uaccess_copy",
     ".global awa_uaccess_insn",

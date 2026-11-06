@@ -412,3 +412,22 @@ pub fn scheduler(r: &mut Report, expected_cpus: usize) {
     let events: u64 = (0..sched::cpu::count()).map(|i| sched::cpu::get(i).trace.written()).sum::<u64>();
     r.check("trace-cost", per_event_ns < 1_000, format_args!("{} ns per event; {} events recorded so far across CPUs", per_event_ns, events));
 }
+
+/// Kernel page-table isolation: while a program runs, its page tables must
+/// not map the kernel, except the entry code.
+pub fn isolation(r: &mut Report, p: &crate::process::Process, entry_start: u64) {
+    if !paging::isolation() {
+        r.check("kpti-kernel-hidden", true, format_args!("not needed: this CPU reports it is not affected by Meltdown"));
+        return;
+    }
+    let user = p.user_pml4();
+    let visible = |va: u64| paging::translate_in(user, va).is_some();
+    let hidden = [paging::kernel_rodata_start(), paging::HEAP_BASE, mem::phys_to_virt(0x10_0000), paging::kernel_text_start() + 0x10_000];
+    let leaked: alloc::vec::Vec<u64> = hidden.iter().copied().filter(|&va| visible(va)).collect();
+    let entry_ok = visible(entry_start) && visible(p.vdso_base);
+    r.check(
+        "kpti-kernel-hidden",
+        leaked.is_empty() && entry_ok,
+        format_args!("in init's user page tables: kernel data, heap, RAM and code {}; entry code and vDSO {}", if leaked.is_empty() { "unmapped" } else { "STILL MAPPED" }, if entry_ok { "mapped" } else { "MISSING" }),
+    );
+}
