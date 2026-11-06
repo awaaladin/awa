@@ -29,6 +29,12 @@ SECTIONS
     . = ALIGN(CONSTANT(MAXPAGESIZE));
     __text_start = .;
     .text : {
+        /* Entry code first, on its own pages: these pages stay mapped while
+           user programs run (kernel page-table isolation). */
+        __entry_start = .;
+        KEEP(*(.entry_text))
+        . = ALIGN(4096);
+        __entry_end = .;
         *(.text .text.*)
     } :text
     __text_end = .;

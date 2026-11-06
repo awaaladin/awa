@@ -8,7 +8,7 @@
 //! I/O APIC routing for device interrupts (needs ACPI MADT, Phase 3/7).
 
 use super::cpu::{read_msr, write_msr};
-use super::idt::{self, InterruptStackFrame};
+use super::idt::{self, TrapFrame};
 use super::port::{inb, outb};
 use crate::mem;
 use core::arch::asm;
@@ -215,7 +215,7 @@ pub fn send_reschedule(apic_id: u32) {
     send_ipi(apic_id, RESCHEDULE_VECTOR);
 }
 
-extern "x86-interrupt" fn timer_interrupt(_frame: InterruptStackFrame) {
+fn timer_interrupt(_frame: &mut TrapFrame) {
     if u64::from(id()) == BOOT_APIC_ID.load(Ordering::Relaxed) {
         TICKS.fetch_add(1, Ordering::Relaxed);
         let now = rdtsc();
@@ -228,13 +228,13 @@ extern "x86-interrupt" fn timer_interrupt(_frame: InterruptStackFrame) {
     crate::sched::tick();
 }
 
-extern "x86-interrupt" fn reschedule_interrupt(_frame: InterruptStackFrame) {
+fn reschedule_interrupt(_frame: &mut TrapFrame) {
     eoi();
     crate::sched::tick();
 }
 
 /// Spurious APIC interrupts must not be acknowledged.
-extern "x86-interrupt" fn spurious_interrupt(_frame: InterruptStackFrame) {}
+fn spurious_interrupt(_frame: &mut TrapFrame) {}
 
 pub fn enable_interrupts() {
     // SAFETY: the IDT has handlers for every vector that can now fire (the
