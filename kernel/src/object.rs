@@ -224,7 +224,8 @@ impl Endpoint {
             }
             q.push_back(msg);
         }
-        peer.readers.wake_all();
+        // The reader runs on this CPU next: senders usually wait for a reply.
+        peer.readers.wake_all_here();
         Ok(())
     }
 

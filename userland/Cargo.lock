@@ -26,6 +26,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzz"
+version = "0.1.0"
+dependencies = [
+ "awa",
+]
+
+[[package]]
 name = "init"
 version = "0.1.0"
 dependencies = [

@@ -618,11 +618,27 @@ impl WaitQueue {
             wake(t);
         }
     }
+
+    /// Like `wake_all`, but unpinned waiters are moved to this CPU: the
+    /// caller is about to wait for them (a request/reply), so they can run
+    /// here at once instead of waiting for another CPU's timer tick.
+    pub fn wake_all_here(&self) {
+        let waiters = core::mem::take(&mut *self.0.lock());
+        let here = this_cpu().index;
+        for t in waiters {
+            wake_on(t, Some(here));
+        }
+    }
 }
 
 /// Makes a blocked thread runnable again. Safe against every race with the
 /// thread going to sleep: if it has not blocked yet, the wake-up is remembered.
 pub fn wake(t: &'static Thread) {
+    wake_on(t, None);
+}
+
+/// `wake`, with an optional preferred CPU for threads that are not pinned.
+pub fn wake_on(t: &'static Thread, prefer: Option<usize>) {
     let target = {
         let mut p = t.sched.lock();
         match p.state {
@@ -633,7 +649,9 @@ pub fn wake(t: &'static Thread) {
                     // see it is ready and queue it.
                     return;
                 }
-                p.pinned.unwrap_or(p.cpu)
+                let target = p.pinned.or(prefer).unwrap_or(p.cpu);
+                p.cpu = target;
+                target
             }
             State::Dead => return,
             _ => {

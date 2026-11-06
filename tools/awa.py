@@ -115,7 +115,7 @@ def cargo() -> str:
 
 
 # User programs loaded next to the kernel (Limine modules), in boot order.
-PROGRAMS = ["init", "ping", "pong", "crashme", "noperm"]
+PROGRAMS = ["init", "ping", "pong", "crashme", "noperm", "fuzz"]
 
 KERNEL_RUSTFLAGS = "-C code-model=kernel -C relocation-model=static -C force-frame-pointers=yes"
 USER_RUSTFLAGS = "-C relocation-model=pie -C force-frame-pointers=yes"

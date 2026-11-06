@@ -81,6 +81,7 @@ fn slot_to_call(slot: u64) -> Option<Call> {
         16 => VmoSize,
         17 => TestReport,
         18 => ProcessVdso,
+        19 => ChannelCall,
         _ => return None,
     })
 }
@@ -218,6 +219,14 @@ fn call(p: &Arc<Process>, slot: u64, a: [u64; 6]) -> R {
             let raw: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
             write_user(a[3], &raw)?;
             Ok(len | (count << 32))
+        }
+        Call::ChannelCall => {
+            let ch = get_channel(p, a[0], rights::READ | rights::WRITE)?;
+            let bytes = read_user(a[1], a[2], MAX_MESSAGE_BYTES)?;
+            ch.write(Message { bytes, handles: Vec::new() }).map_err(|(s, _)| s)?;
+            let msg = ch.read(a[4].min(MAX_MESSAGE_BYTES) as usize, 0)?;
+            write_user(a[3], &msg.bytes)?;
+            Ok(msg.bytes.len() as u64)
         }
         Call::VmoCreate => {
             let v = Vmo::create(a[0])?;

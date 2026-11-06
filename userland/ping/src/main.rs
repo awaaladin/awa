@@ -26,7 +26,8 @@ fn awa_main(start: Startup) -> i64 {
         Ok(&buf[..n] == b"got:hello from ping")
     })();
 
-    // Round trips: 64-byte message to pong and back.
+    // Round trips: 64-byte message to pong and back, first as separate
+    // write + read, then with the combined channel_call.
     let msg = [7u8; 64];
     let t0 = clock_ns();
     let mut ok = true;
@@ -34,9 +35,14 @@ fn awa_main(start: Startup) -> i64 {
         ok &= channel::write(pong, &msg, &[]).is_ok();
         ok &= matches!(channel::read(pong, &mut buf, &mut []), Ok((64, 0)));
     }
-    let rtt = (clock_ns() - t0) / ROUNDS;
+    let rtt_split = (clock_ns() - t0) / ROUNDS;
+    let t1 = clock_ns();
+    for _ in 0..ROUNDS {
+        ok &= channel::call(pong, &msg, &mut buf) == Ok(64);
+    }
+    let rtt = (clock_ns() - t1) / ROUNDS;
 
-    let report = fmt_line!("handoff={} rtt_ns={} rounds_ok={}", if handoff == Ok(true) { "ok" } else { "failed" }, rtt, ok);
+    let report = fmt_line!("handoff={} rtt_ns={} split_rtt_ns={} rounds_ok={}", if handoff == Ok(true) { "ok" } else { "failed" }, rtt, rtt_split, ok);
     let _ = channel::write(to_init, report.as_str().as_bytes(), &[]);
     if handoff == Ok(true) && ok { 0 } else { 2 }
 }

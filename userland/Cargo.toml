@@ -2,7 +2,7 @@
 # normal code model) by `python tools/awa.py build`.
 [workspace]
 resolver = "3"
-members = ["init", "ping", "pong", "crashme", "noperm"]
+members = ["init", "ping", "pong", "crashme", "noperm", "fuzz"]
 
 [profile.dev]
 panic = "abort"

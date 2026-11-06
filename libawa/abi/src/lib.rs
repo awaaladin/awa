@@ -54,9 +54,12 @@ pub enum Call {
     TestReport = 17,
     /// (process) -> vDSO base address in that process (for its start-up arguments).
     ProcessVdso = 18,
+    /// (handle, wbuf, wlen, rbuf, rcap) -> reply length. Sends a message
+    /// (no handles) and waits for the reply on the same channel end.
+    ChannelCall = 19,
 }
 
-pub const CALL_COUNT: u64 = 19;
+pub const CALL_COUNT: u64 = 20;
 
 /// Error codes (returned negated).
 #[repr(i64)]

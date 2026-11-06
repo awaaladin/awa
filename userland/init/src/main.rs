@@ -137,7 +137,8 @@ fn cross_process_checks(files: &Files) {
             let handoff = text.contains("handoff=ok");
             report("two-processes-exchange", ps == 0 && qs == 0 && handoff, format_args!("ping exit {}, pong exit {}; ping says: {}", ps, qs, text));
             let rtt = text.split("rtt_ns=").nth(1).and_then(|t| t.split(' ').next()).and_then(|t| t.parse::<u64>().ok());
-            report("ipc-roundtrip", rtt.is_some(), format_args!("{} ns per round trip between two processes (64-byte messages, includes two context switches)", rtt.unwrap_or(0)));
+            let split = text.split("split_rtt_ns=").nth(1).and_then(|t| t.split(' ').next()).and_then(|t| t.parse::<u64>().ok());
+            report("ipc-roundtrip", rtt.is_some(), format_args!("{} ns per channel_call round trip between two processes ({} ns as separate write + read)", rtt.unwrap_or(0), split.unwrap_or(0)));
         }
         Err(e) => report("two-processes-exchange", false, format_args!("could not run ping/pong: {:?}", e)),
     }
@@ -160,4 +161,24 @@ fn cross_process_checks(files: &Files) {
         process::wait(p)
     })();
     report("no-handle-no-access", result == Ok(0), format_args!("noperm using init's handle number -> exit {:?} (0 = refused as expected)", result));
+
+    // Fuzzing: tens of thousands of random system calls. Passing means the
+    // kernel answered every one and is still running.
+    // fuzz may crash itself (random pointers can hit its own stack); what
+    // matters is that it ended and the kernel, and init, are still running.
+    let result = (|| -> awa::Result<(u64, [u8; 96], usize)> {
+        let file = files.find("fuzz").ok_or(Status::BadHandle)?;
+        let (ours, theirs) = channel::create()?;
+        let p = loader::spawn(file, theirs)?;
+        let mut buf = [0u8; 96];
+        let n = channel::read(ours, &mut buf, &mut []).map(|(n, _)| n).unwrap_or(0);
+        Ok((process::wait(p)?, buf, n))
+    })();
+    match result {
+        Ok((status, buf, n)) => {
+            let summary = if n > 0 { core::str::from_utf8(&buf[..n]).unwrap_or("?") } else { "fuzz ended before reporting (it damaged its own memory)" };
+            report("syscall-fuzz", true, format_args!("kernel survived random syscalls: {}; fuzz status {:#x}", summary, status));
+        }
+        Err(e) => report("syscall-fuzz", false, format_args!("fuzz did not run: {:?}", e)),
+    }
 }

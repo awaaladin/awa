@@ -112,6 +112,12 @@ pub mod channel {
         check(sys(Call::ChannelWrite, [u64::from(h), bytes.as_ptr() as u64, bytes.len() as u64, handles.as_ptr() as u64, handles.len() as u64, 0])).map(|_| ())
     }
 
+    /// Sends `request` and waits for the reply on the same end (one kernel
+    /// entry for the whole round trip). Returns the reply length.
+    pub fn call(h: u32, request: &[u8], reply: &mut [u8]) -> Result<usize> {
+        check(sys(Call::ChannelCall, [u64::from(h), request.as_ptr() as u64, request.len() as u64, reply.as_mut_ptr() as u64, reply.len() as u64, 0])).map(|n| n as usize)
+    }
+
     /// Waits for a message. Returns (bytes received, handles received).
     pub fn read(h: u32, buf: &mut [u8], handles: &mut [u32]) -> Result<(usize, usize)> {
         let r = check(sys(Call::ChannelRead, [u64::from(h), buf.as_mut_ptr() as u64, buf.len() as u64, handles.as_mut_ptr() as u64, handles.len() as u64, 0]))?;
